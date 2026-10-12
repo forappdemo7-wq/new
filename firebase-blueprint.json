@@ -1,0 +1,266 @@
+{
+  "entities": {
+    "Work": {
+      "title": "Work",
+      "description": "Public domain literary work, comic, or manga entry in the catalog.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "type": { "type": "string", "enum": ["book", "comic", "manga"] },
+        "description": { "type": "string", "maxLength": 2000 },
+        "genres": { "type": "array" },
+        "licenseCode": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["title", "type"]
+    },
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "Saved reading bookmark position for a user or session.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "workId": { "type": "string", "maxLength": 100 },
+        "chapterId": { "type": "string", "maxLength": 100 },
+        "workTitle": { "type": "string", "maxLength": 200 },
+        "chapterTitle": { "type": "string", "maxLength": 200 },
+        "pageNumber": { "type": "number" },
+        "note": { "type": "string", "maxLength": 1000 },
+        "chapterIndex": { "type": "number" },
+        "pageIndex": { "type": "number" },
+        "updatedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["workId"]
+    },
+    "ReadingProgress": {
+      "title": "ReadingProgress",
+      "description": "User reading percentage and chapter state for cross-device sync.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "workId": { "type": "string", "maxLength": 100 },
+        "chapterId": { "type": "string", "maxLength": 100 },
+        "chapterNumber": { "type": "number" },
+        "chapterTitle": { "type": "string", "maxLength": 200 },
+        "workTitle": { "type": "string", "maxLength": 200 },
+        "workType": { "type": "string" },
+        "coverImage": { "type": "string" },
+        "percent": { "type": "number" },
+        "lastReadAt": { "type": "string" }
+      },
+      "required": ["workId", "percent"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile with chosen display name, avatar, bio, and preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "displayNameLower": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 200 },
+        "photoURL": { "type": "string", "maxLength": 200000 },
+        "avatarType": { "type": "string", "enum": ["preset", "custom", "generated"] },
+        "bio": { "type": "string", "maxLength": 500 },
+        "favoriteGenres": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "UsernameRecord": {
+      "title": "UsernameRecord",
+      "description": "Unique username registry document guaranteeing distinct usernames across readers.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "claimedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "BannedUser": {
+      "title": "BannedUser",
+      "description": "Restricted or banned user account records for community moderation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "reason": { "type": "string", "maxLength": 500 },
+        "bannedAt": { "type": "string" },
+        "bannedBy": { "type": "string", "maxLength": 100 },
+        "purgedWorksCount": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["id", "email"]
+    },
+    "ReportItem": {
+      "title": "ReportItem",
+      "description": "Content moderation flag or report submitted by community readers.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "workId": { "type": "string", "maxLength": 100 },
+        "workTitle": { "type": "string", "maxLength": 200 },
+        "reason": { "type": "string", "maxLength": 100 },
+        "details": { "type": "string", "maxLength": 2000 },
+        "reporterContact": { "type": "string", "maxLength": 200 },
+        "submittedAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved"] }
+      },
+      "required": ["workId", "reason"]
+    },
+    "LicenseAudit": {
+      "title": "LicenseAudit",
+      "description": "Catalog audit trail logging copyright, license status, and verification history.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "workId": { "type": "string", "maxLength": 100 },
+        "workTitle": { "type": "string", "maxLength": 200 },
+        "verifiedBy": { "type": "string", "maxLength": 100 },
+        "verifiedAt": { "type": "string" },
+        "evidenceUrl": { "type": "string", "maxLength": 500 },
+        "jurisdictionNotes": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["verified", "needs_review", "rejected"] }
+      },
+      "required": ["workId", "verifiedBy"]
+    },
+    "WorkLike": {
+      "title": "WorkLike",
+      "description": "Like record on a book or uploaded work.",
+      "type": "object",
+      "properties": {
+        "workId": { "type": "string", "maxLength": 100 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userAvatar": { "type": "string", "maxLength": 200000 },
+        "likedAt": { "type": "string" }
+      },
+      "required": ["workId", "userId"]
+    },
+    "WorkComment": {
+      "title": "WorkComment",
+      "description": "User comment or review on a book or uploaded work.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "workId": { "type": "string", "maxLength": 100 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userAvatar": { "type": "string", "maxLength": 200000 },
+        "content": { "type": "string", "maxLength": 2000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["workId", "userId", "content"]
+    },
+    "UserNotification": {
+      "title": "UserNotification",
+      "description": "In-app notification for likes, comments, and catalog updates.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "recipientUserId": { "type": "string", "maxLength": 128 },
+        "senderUserId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 100 },
+        "senderAvatar": { "type": "string", "maxLength": 200000 },
+        "type": { "type": "string", "enum": ["like", "comment", "update", "curatorial", "system", "recommendation"] },
+        "title": { "type": "string", "maxLength": 200 },
+        "message": { "type": "string", "maxLength": 1000 },
+        "link": { "type": "string", "maxLength": 500 },
+        "workId": { "type": "string", "maxLength": 100 },
+        "workSlug": { "type": "string", "maxLength": 100 },
+        "workTitle": { "type": "string", "maxLength": 200 },
+        "commentId": { "type": "string", "maxLength": 128 },
+        "unread": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["title", "message", "type"]
+    },
+    "UserFollower": {
+      "title": "UserFollower",
+      "description": "Reader who is following another reader/creator.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "photoURL": { "type": "string", "maxLength": 200000 },
+        "bio": { "type": "string", "maxLength": 500 },
+        "followedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "UserFollowing": {
+      "title": "UserFollowing",
+      "description": "Reader or creator that the user is following.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "photoURL": { "type": "string", "maxLength": 200000 },
+        "bio": { "type": "string", "maxLength": 500 },
+        "followedAt": { "type": "string" }
+      },
+      "required": ["uid", "displayName"]
+    }
+  },
+  "firestore": {
+    "/works/{workId}": {
+      "schema": "Work",
+      "description": "Public catalog works collection"
+    },
+    "/works/{workId}/likes/{userId}": {
+      "schema": "WorkLike",
+      "description": "Likes on catalog or uploaded works"
+    },
+    "/works/{workId}/comments/{commentId}": {
+      "schema": "WorkComment",
+      "description": "Comments on catalog or uploaded works"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document owned by the user"
+    },
+    "/users/{userId}/followers/{followerId}": {
+      "schema": "UserFollower",
+      "description": "Users following this user"
+    },
+    "/users/{userId}/following/{targetUserId}": {
+      "schema": "UserFollowing",
+      "description": "Users this user is following"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "UserNotification",
+      "description": "User in-app notifications collection"
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": "Bookmark",
+      "description": "User reading bookmarks collection scoped to user"
+    },
+    "/users/{userId}/reading_progress/{workId}": {
+      "schema": "ReadingProgress",
+      "description": "User reading progress scoped to user for cross-device sync"
+    },
+    "/bookmarks/{bookmarkId}": {
+      "schema": "Bookmark",
+      "description": "User reading bookmarks collection"
+    },
+    "/banned_users/{userId}": {
+      "schema": "BannedUser",
+      "description": "Banned users moderation collection"
+    },
+    "/reports/{reportId}": {
+      "schema": "ReportItem",
+      "description": "Content reports collection"
+    },
+    "/audits/{auditId}": {
+      "schema": "LicenseAudit",
+      "description": "License audits trail collection"
+    },
+    "/usernames/{usernameLower}": {
+      "schema": "UsernameRecord",
+      "description": "Unique username registry collection mapping lowercase usernames to user IDs"
+    }
+  }
+}

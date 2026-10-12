@@ -1,0 +1,6 @@
+{
+  "name": "wanna read?",
+  "description": "An ad-free, privacy-first, free-to-read online library for openly licensed books, manga, and comics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

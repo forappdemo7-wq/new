@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181A20"/>
+      <stop offset="100%" stop-color="#0E1015"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)"/>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.08"/>
+
+  <!-- Official Original Open Book Emblem -->
+  <g transform="translate(106, 126) scale(2.88)">
+    <!-- Left Open Page Frame (Pure Off-White) -->
+    <path
+      d="M13 25.5C27 18 38 21.5 45 26.5V72.5C38 68 27 64 13 57.5V25.5Z"
+      stroke="#FAF8F5"
+      stroke-width="7.5"
+      stroke-linejoin="round"
+      stroke-linecap="round"
+      fill="none"
+    />
+
+    <!-- Right Bottom Curved Page (Pure Off-White) -->
+    <path
+      d="M55 72.5C64 68 81 64 89 57.5V47.5C81 52 66 56.5 55 59.5V72.5Z"
+      fill="#FAF8F5"
+    />
+
+    <!-- Right Top Accent Page (Signature Coral #EE5836 Page Turn) -->
+    <path
+      d="M55 26.5C66 21 80 15 89 10.5V46.5C81 51 66 55.5 55 58.5V26.5Z"
+      fill="#EE5836"
+    />
+  </g>
+
+  <!-- Signature Coral Dot Emblem Accent -->
+  <circle cx="394" cy="382" r="16" fill="#EE5836" />
+</svg>

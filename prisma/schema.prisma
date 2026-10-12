@@ -1,0 +1,249 @@
+// Prisma Schema for get-now Open Library
+// Robust Cover Image Metadata & Sovereign Digital Archive Models
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkType {
+  BOOK
+  COMIC
+  MANGA
+}
+
+enum CoverSource {
+  OPEN_LIBRARY
+  DIGITAL_COMIC_MUSEUM
+  COMIC_BOOK_PLUS
+  WIKIMEDIA_COMMONS
+  RAWPIXEL
+  MANUAL_UPLOAD
+  TYPOGRAPHIC_GHOST
+  OTHER
+}
+
+enum CoverLicense {
+  PUBLIC_DOMAIN
+  CC0
+  CC_BY
+  FAIR_USE
+  UNKNOWN
+}
+
+enum CoverStatus {
+  PUBLISHED
+  PENDING_REVIEW
+  FLAGGED
+  REJECTED
+}
+
+enum JurisdictionStatus {
+  WORLDWIDE_PD
+  PD_US_ONLY
+  PD_JAPAN_ONLY
+  PD_EU_ONLY
+  CC
+  AUTHOR_PERMITTED
+  LINK_OUT_ONLY
+}
+
+enum ReportReason {
+  COPYRIGHT
+  COVER_INFRINGEMENT
+  COVER_MISMATCH
+  COVER_BROKEN
+  LICENSE_MISMATCH
+  BROKEN_CONTENT
+  MISATTRIBUTION
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+}
+
+model Work {
+  id                      String             @id @default(cuid())
+  title                   String
+  nativeTitle             String?
+  romajiTitle             String?
+  slug                    String             @unique
+  type                    WorkType           @default(BOOK)
+  description             String             @db.Text
+  synopsis                String             @db.Text
+  
+  // ── Work License (Separate from Cover License) ──
+  language                String             @default("English")
+  licenseCode             String
+  licenseUrl              String
+  sourceUrl               String
+  sourceName              String
+  attribution             String             @db.Text
+  publisher               String?
+  originalPublicationYear Int
+  jurisdictionStatus      JurisdictionStatus @default(WORLDWIDE_PD)
+  jurisdictionNotes       String             @db.Text
+  isHosted                Boolean            @default(true)
+  externalReadUrl         String?
+  readingDirection        String             @default("ltr")
+  demographic             String?
+  
+  // ── Cover Image Metadata & Legal Tracking ───────
+  coverImageUrl           String             @db.Text
+  coverLqip               String?            @db.Text  // Blur-up placeholder data URL / dominant color
+  coverSource             CoverSource        @default(OPEN_LIBRARY)
+  coverSourceUrl          String?            @db.Text
+  coverLicense            CoverLicense       @default(UNKNOWN)
+  coverAttribution        String?            @db.Text  // "Cover art by [Artist], courtesy of [Source]"
+  coverStatus             CoverStatus        @default(PENDING_REVIEW)
+  coverPalette            Json?              // Dominant, secondary, and text color codes for ghost cover
+  
+  // ── Identifiers for Auto-Fetching ───────────────
+  isbn                    String?            @db.VarChar(32)
+  olid                    String?            @db.VarChar(32) // Open Library ID (e.g. OL12345M)
+  oclc                    String?            @db.VarChar(32) // OCLC Control Number
+
+  // ── Relations ───────────────────────────────────
+  authors                 Author[]           @relation("WorkAuthors")
+  genres                  WorkGenre[]
+  tags                    WorkTag[]
+  chapters                Chapter[]
+  coverReports            CoverReport[]
+  auditLogs               LicenseAudit[]
+  
+  // ── Metrics & Verification ──────────────────────
+  fileFormat              String             @default("html")
+  status                  String             @default("completed")
+  wordCount               Int?
+  pageCount               Int?
+  readingTimeMinutes      Int?
+  featured                Boolean            @default(false)
+  recentlyAdded           Boolean            @default(false)
+  popularityScore         Int                @default(0)
+  verificationStatus      String             @default("verified")
+  verifiedAt              DateTime?
+  verifiedBy              String?
+  evidenceUrl             String?
+  
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  @@index([slug])
+  @@index([type])
+  @@index([coverLicense])
+  @@index([coverStatus])
+  @@index([isbn])
+  @@index([olid])
+}
+
+model Author {
+  id                  String   @id @default(cuid())
+  name                String
+  slug                String   @unique
+  nativeName          String?
+  role                String   @default("Author")
+  bio                 String   @db.Text
+  birthDeath          String?
+  website             String?
+  verifiedOpenLicense Boolean  @default(true)
+  works               Work[]   @relation("WorkAuthors")
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Chapter {
+  id            String      @id @default(cuid())
+  workId        String
+  work          Work        @relation(fields: [workId], references: [id], onDelete: Cascade)
+  volumeNumber  Int?
+  chapterNumber Int         @default(1)
+  number        Int         @default(1)
+  title         String
+  slug          String
+  wordCount     Int?
+  pagesCount    Int?
+  content       String?     @db.Text // Rich text / paragraphs for books
+  pages         ComicPage[]
+  releaseDate   DateTime?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([workId, slug])
+}
+
+model ComicPage {
+  id         String   @id @default(cuid())
+  chapterId  String
+  chapter    Chapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  pageNumber Int
+  imageUrl   String?  @db.Text
+  svgArt     String?  @db.Text
+  caption    String?
+  altText    String   @db.Text
+  width      Int?
+  height     Int?
+
+  createdAt  DateTime @default(now())
+
+  @@unique([chapterId, pageNumber])
+}
+
+model WorkGenre {
+  id     String @id @default(cuid())
+  workId String
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  name   String
+
+  @@unique([workId, name])
+}
+
+model WorkTag {
+  id     String @id @default(cuid())
+  workId String
+  work   Work   @relation(fields: [workId], references: [id], onDelete: Cascade)
+  name   String
+
+  @@unique([workId, name])
+}
+
+model CoverReport {
+  id              String       @id @default(cuid())
+  workId          String
+  work            Work         @relation(fields: [workId], references: [id], onDelete: Cascade)
+  reason          ReportReason @default(COVER_INFRINGEMENT)
+  details         String       @db.Text
+  suggestedSource String?      @db.Text
+  reporterEmail   String?
+  status          ReportStatus @default(PENDING)
+  resolvedAt      DateTime?
+  resolvedBy      String?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([workId])
+  @@index([status])
+}
+
+model LicenseAudit {
+  id                String   @id @default(cuid())
+  workId            String
+  work              Work     @relation(fields: [workId], references: [id], onDelete: Cascade)
+  verifiedBy        String
+  verifiedAt        DateTime @default(now())
+  evidenceUrl       String   @db.Text
+  jurisdictionNotes String   @db.Text
+  coverLicenseAudit String?  @db.Text // Audit notes on cover copyright status
+  status            String   @default("verified")
+
+  createdAt         DateTime @default(now())
+}

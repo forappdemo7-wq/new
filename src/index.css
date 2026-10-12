@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-serif: "Newsreader", "Georgia", "Times New Roman", serif;
+  --font-display: "Newsreader", "Georgia", serif;
+  --font-sans: "Instrument Sans", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-reading: "Newsreader", "Literata", "Merriweather", Georgia, serif;
+}
+
+:root {
+  --color-canvas: #FAF8F5;
+  --color-canvas-subtle: #F4EFEA;
+  --color-canvas-border: #E8E3DC;
+  --color-ink: #1A1A1A;
+  --color-ink-muted: #6E6A65;
+  --color-accent: #C25E3A;
+  --color-accent-hover: #A94E2D;
+}
+
+html.dark {
+  --color-canvas: #12141A;
+  --color-canvas-subtle: #191C24;
+  --color-canvas-border: #252A36;
+  --color-ink: #F5F3EF;
+  --color-ink-muted: #9BA1B0;
+  --color-accent: #D9774F;
+  --color-accent-hover: #E28863;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+body {
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern", "liga", "clig", "calt";
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.015em;
+}
+
+.font-serif {
+  font-family: var(--font-serif);
+  font-feature-settings: "kern", "liga", "calt";
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-feature-settings: "kern", "liga", "dlig", "calt";
+}
+
+.font-sans {
+  font-family: var(--font-sans);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero", "tnum";
+}
+
+.font-reading {
+  font-family: var(--font-reading);
+  font-optical-sizing: auto;
+  font-feature-settings: "kern", "liga", "calt";
+}
+
+::selection {
+  background-color: rgba(194, 94, 58, 0.25);
+  color: inherit;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 113, 108, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 113, 108, 0.45);
+}

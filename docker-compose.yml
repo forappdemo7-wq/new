@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: getnow_library_web
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://getnow:archival_secure_pwd@postgres:5432/getnow_library?schema=public
+      - REDIS_URL=redis://redis:6379
+      - MEILISEARCH_HOST=http://meilisearch:7700
+      - MEILISEARCH_KEY=master_search_api_key_getnow_prod
+      - STORAGE_PROVIDER=cloudflare_r2
+      - R2_BUCKET_NAME=getnow-open-archive
+      - CDN_BASE_URL=https://cdn.getnow.org
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      meilisearch:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: getnow_ingestion_worker
+    restart: unless-stopped
+    command: ["npm", "run", "ingest", "--", "--source=all", "--limit=100"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://getnow:archival_secure_pwd@postgres:5432/getnow_library?schema=public
+      - REDIS_URL=redis://redis:6379
+      - MEILISEARCH_HOST=http://meilisearch:7700
+      - MEILISEARCH_KEY=master_search_api_key_getnow_prod
+    depends_on:
+      - app
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: getnow_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: getnow
+      POSTGRES_PASSWORD: archival_secure_pwd
+      POSTGRES_DB: getnow_library
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U getnow -d getnow_library"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: getnow_redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.6
+    container_name: getnow_meilisearch
+    restart: unless-stopped
+    ports:
+      - '7700:7700'
+    environment:
+      - MEILI_MASTER_KEY=master_search_api_key_getnow_prod
+      - MEILI_ENV=production
+    volumes:
+      - meilidata:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
+  meilidata:

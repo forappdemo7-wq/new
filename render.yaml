@@ -1,0 +1,29 @@
+# Render Blueprint Configuration (Infrastructure-as-Code)
+# Deploy your Express backend to Render in 1 click
+services:
+  - type: web
+    name: narrative-realm-backend
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*" # Set to your Vercel URL (e.g., https://your-app.vercel.app) or leave *
+      - key: GEMINI_API_KEY
+        sync: false # Set your Gemini API key in the Render Environment Variables tab
+      # Backblaze B2 Failover Storage
+      - key: B2_KEY_ID
+        sync: false # Your Backblaze Key ID
+      - key: B2_APPLICATION_KEY
+        sync: false # Secret key
+      - key: B2_BUCKET_NAME
+        sync: false # Your B2 bucket name
+      - key: B2_REGION
+        value: "us-west-004"
+      - key: B2_ENDPOINT
+        value: "https://s3.us-west-004.backblazeb2.com"
+
