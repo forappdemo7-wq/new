@@ -163,3 +163,26 @@ export async function uploadMediaFile(
   const localUrl = uploadToLocal(buffer, normalizedPath);
   return { url: localUrl, provider: 'local', storagePath: normalizedPath };
 }
+
+/**
+ * Returns storage system status overview for health checks
+ */
+export function getStorageOverview() {
+  const b2 = getB2Client();
+  return {
+    primary: {
+      provider: 'firebase',
+      enabled: Boolean(firebaseStorage),
+    },
+    fallback: {
+      provider: 'backblaze',
+      enabled: Boolean(b2),
+      bucket: b2?.bucket || null,
+      region: b2?.region || null,
+    },
+    offline: {
+      provider: 'local',
+      enabled: true,
+    },
+  };
+}

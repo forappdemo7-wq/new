@@ -10,7 +10,7 @@ import cors from 'cors';
 import { geminiApiRouter } from './server/routes/geminiApi';
 import { coverApiRouter } from './server/routes/coverApi';
 import { mediaApiRouter } from './server/routes/mediaApi';
-import { getStorageOverview } from './server/services/b2Storage';
+import { getStorageOverview } from './server/services/storageService';
 
 dotenv.config();
 

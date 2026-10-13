@@ -15,7 +15,7 @@ This project is configured for **Option 3: Hybrid Architecture**:
    - **Name**: `narrative-realm-backend` (or your choice)
    - **Language / Runtime**: `Node`
    - **Branch**: `main`
-   - **Build Command**: `npm install`
+   - **Build Command**: `npm install --legacy-peer-deps` (or `npm install`)
    - **Start Command**: `npm run start`
    - **Instance Type**: `Free` (or `Starter` for persistent disk)
    - **Health Check Path**: `/api/health`
