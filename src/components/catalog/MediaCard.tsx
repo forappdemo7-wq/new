@@ -24,7 +24,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 }) => {
   const { navigate } = useRouter();
   const { isFavorite, toggleFavoriteWork, progress } = useLibrary();
-  const { currentUser, userProfile } = useAuth();
+  const { currentUser, userProfile, openAuthModal } = useAuth();
 
   const [imageFailed, setImageFailed] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -146,11 +146,42 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
   const handleLikeToggle = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!activeUserId) {
+      openAuthModal('signin');
+      return;
+    }
     if (isLiking) return;
     setIsLiking(true);
 
+    // Save previous state for automatic rollback
+    const prevLiked = isLiked;
+    const prevLikes = loadedLikes || [];
+    const optimisticLiked = !prevLiked;
+
+    // 0ms instant optimistic update
+    setIsLiked(optimisticLiked);
+    if (optimisticLiked) {
+      setLoadedLikes([
+        ...prevLikes.filter((l) => l.userId !== activeUserId),
+        {
+          id: `like-${work.id}-${activeUserId}`,
+          workId: work.id,
+          userId: activeUserId,
+          userName: activeDisplayName,
+          userAvatar: activeAvatar,
+          likedAt: new Date().toISOString(),
+        },
+      ]);
+      setLikeFeedback('Liked!');
+      setTimeout(() => setLikeFeedback(null), 2000);
+    } else {
+      setLoadedLikes(prevLikes.filter((l) => l.userId !== activeUserId));
+      setLikeFeedback('Unliked');
+      setTimeout(() => setLikeFeedback(null), 1500);
+    }
+
     const userPayload = {
-      uid: activeUserId || `guest-${Date.now()}`,
+      uid: activeUserId,
       displayName: activeDisplayName,
       photoURL: activeAvatar,
     };
@@ -158,12 +189,13 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     try {
       const res = await toggleWorkLike(work, userPayload);
       setIsLiked(res.liked);
-      if (res.liked) {
-        setLikeFeedback('Uploader notified!');
-        setTimeout(() => setLikeFeedback(null), 2500);
-      }
-    } catch (err) {
-      console.warn('MediaCard like error:', err);
+    } catch (err: any) {
+      // Automatic rollback on failure
+      setIsLiked(prevLiked);
+      setLoadedLikes(prevLikes);
+      setLikeFeedback('Failed to update');
+      setTimeout(() => setLikeFeedback(null), 2500);
+      console.warn('MediaCard like error:', err?.message || err);
     } finally {
       setIsLiking(false);
     }
@@ -176,9 +208,15 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     navigate(`/${prefix}/${work.slug}#comments`);
   };
 
-  const likesList = loadedLikes || [];
-  const currentLikesCount = loadedLikes !== null ? loadedLikes.length : getWorkLikesCount(work);
-  const currentCommentsCount = loadedCommentsCount !== null ? loadedCommentsCount : (work.commentsCount || 0);
+  const likesList = (loadedLikes || []).filter(
+    (l) => l.userId && !l.userId.startsWith('guest-')
+  );
+  const currentLikesCount = loadedLikes !== null
+    ? Math.max(likesList.length, work.likesCount || 0)
+    : getWorkLikesCount(work);
+  const currentCommentsCount = loadedCommentsCount !== null
+    ? Math.max(loadedCommentsCount, work.commentsCount || 0)
+    : (work.commentsCount || 0);
 
   /* ──────────────────────────────────────────────────────────────── */
   /* GRID MEDIA CARD (Editorial Bookshelf Layout)                     */

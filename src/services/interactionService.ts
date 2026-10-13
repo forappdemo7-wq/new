@@ -10,16 +10,90 @@ import {
   getDocs,
   onSnapshot,
   query,
-  orderBy
+  orderBy,
+  increment
 } from 'firebase/firestore';
 import { Work, WorkLike, WorkComment, LibraryNotification } from '../types';
 
 // ================= LOCAL FALLBACK HELPERS =================
 
+/**
+ * Sanitizes and deduplicates an array of likes:
+ * 1. Disallows guest/anonymous dummy entries (must have valid registered userId not starting with 'guest-').
+ * 2. Strictly enforces uniqueness: at most ONE like per unique registered userId.
+ */
+export function sanitizeLikes(likes: any[]): WorkLike[] {
+  if (!Array.isArray(likes)) return [];
+  const seenUsers = new Set<string>();
+  const sanitized: WorkLike[] = [];
+
+  for (const item of likes) {
+    if (!item || typeof item !== 'object') continue;
+    const userId = item.userId;
+    // Reject guest IDs and empty IDs
+    if (!userId || typeof userId !== 'string' || userId.startsWith('guest-') || userId === 'guest-session') {
+      continue;
+    }
+    // Deduplicate: at most ONE like per registered account
+    if (seenUsers.has(userId)) continue;
+    seenUsers.add(userId);
+    sanitized.push({
+      id: item.id || `like-${item.workId || 'work'}-${userId}`,
+      workId: item.workId || '',
+      userId,
+      userName: item.userName || 'Reader',
+      userAvatar: item.userAvatar || undefined,
+      likedAt: item.likedAt || new Date().toISOString(),
+    });
+  }
+  return sanitized;
+}
+
+// Auto-purge stale guest likes from localStorage once upon initialization
+try {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const keysToClean: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('getnow_work_likes_')) {
+        keysToClean.push(k);
+      }
+    }
+    for (const k of keysToClean) {
+      const raw = localStorage.getItem(k);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            const sanitized = sanitizeLikes(parsed);
+            if (sanitized.length > 0) {
+              localStorage.setItem(k, JSON.stringify(sanitized));
+            } else {
+              localStorage.removeItem(k);
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+} catch {}
+
 export function getLocalLikes(workId: string): WorkLike[] {
   try {
     const raw = localStorage.getItem(`getnow_work_likes_${workId}`);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const sanitized = sanitizeLikes(parsed);
+    // If stale or guest items were cleaned up, write back the clean state
+    if (sanitized.length !== parsed.length) {
+      if (sanitized.length > 0) {
+        localStorage.setItem(`getnow_work_likes_${workId}`, JSON.stringify(sanitized));
+      } else {
+        localStorage.removeItem(`getnow_work_likes_${workId}`);
+      }
+    }
+    return sanitized;
   } catch {
     return [];
   }
@@ -27,7 +101,12 @@ export function getLocalLikes(workId: string): WorkLike[] {
 
 export function saveLocalLikes(workId: string, likes: WorkLike[]): void {
   try {
-    localStorage.setItem(`getnow_work_likes_${workId}`, JSON.stringify(likes));
+    const sanitized = sanitizeLikes(likes);
+    if (sanitized.length > 0) {
+      localStorage.setItem(`getnow_work_likes_${workId}`, JSON.stringify(sanitized));
+    } else {
+      localStorage.removeItem(`getnow_work_likes_${workId}`);
+    }
   } catch {}
 }
 
@@ -37,12 +116,10 @@ export function saveLocalLikes(workId: string, likes: WorkLike[]): void {
 export function getWorkLikesCount(work: Work): number {
   if (!work) return 0;
   try {
+    const local = getLocalLikes(work.id);
     const raw = localStorage.getItem(`getnow_work_likes_${work.id}`);
     if (raw !== null) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.length;
-      }
+      return Math.max(local.length, work.likesCount || 0);
     }
   } catch {}
   return work.likesCount || 0;
@@ -134,69 +211,55 @@ export function saveLocalUserNotifications(userId: string, notifs: LibraryNotifi
 /**
  * Toggle like for a specific work by the current user.
  * Sends an in-app notification to the uploader if the work is uploaded by another user.
+ * Strictly requires an authenticated user account (no guests or anonymous duplicates allowed).
  */
+// In-flight lock map to eliminate race conditions, double-clicks, and duplicate network writes
+const inFlightLikeLocks = new Map<string, Promise<{ liked: boolean; count: number }>>();
+// Throttle map to prevent rapid spam clicking
+const likeThrottleTimestamps = new Map<string, number>();
+const LIKE_COOLDOWN_MS = 400;
+
 export async function toggleWorkLike(
   work: Work,
-  user: { uid: string; displayName?: string; photoURL?: string }
+  user: { uid?: string | null; displayName?: string; photoURL?: string }
 ): Promise<{ liked: boolean; count: number }> {
+  const userId = user?.uid;
+  if (!userId || userId.startsWith('guest-') || userId === 'guest-session') {
+    throw new Error('Authentication required: You must have an account to like works.');
+  }
+
   const workId = work.id;
-  const userId = user.uid;
+  const lockKey = `${userId}:${workId}`;
+
+  // 1. In-flight Lock: If an operation is already pending for this user & work, await and return it
+  const existingInFlight = inFlightLikeLocks.get(lockKey);
+  if (existingInFlight) {
+    return existingInFlight;
+  }
+
+  // 2. Client-side Rate-limiting & Cooldown
+  const now = Date.now();
+  const lastToggle = likeThrottleTimestamps.get(lockKey) || 0;
+  if (now - lastToggle < LIKE_COOLDOWN_MS) {
+    throw new Error('Please wait a moment before toggling like again.');
+  }
+  likeThrottleTimestamps.set(lockKey, now);
+
   const userName = user.displayName?.trim() || 'Reader';
   const userAvatar = user.photoURL || undefined;
 
-  // Optimistic local update
-  const localLikes = getLocalLikes(workId);
-  const existingIndex = localLikes.findIndex((l) => l.userId === userId);
-  const willLike = existingIndex === -1;
+  // Execute toggle with in-flight lock tracking
+  const toggleOperation = (async () => {
+    let willLike = false;
+    const previousLocalLikes = getLocalLikes(workId);
 
-  if (willLike) {
-    localLikes.push({
-      id: `like-${workId}-${userId}`,
-      workId,
-      userId,
-      userName,
-      userAvatar,
-      likedAt: new Date().toISOString(),
-    });
-  } else {
-    localLikes.splice(existingIndex, 1);
-  }
-  saveLocalLikes(workId, localLikes);
+    if (db) {
+      const likeDocRef = doc(db, 'works', workId, 'likes', userId);
+      // Determine remote truth from Firestore document
+      const snap = await getDoc(likeDocRef);
+      const currentlyLiked = snap.exists();
+      willLike = !currentlyLiked;
 
-  // Dispatch custom event for instant cross-component likes reactivity
-  try {
-    window.dispatchEvent(
-      new CustomEvent('getnow:likes-updated', {
-        detail: { workId, likes: localLikes, liked: willLike },
-      })
-    );
-  } catch {}
-
-  // Send notification to uploader
-  if (willLike) {
-    const uploaderId = work.uploaderId || work.publisherId;
-    if (uploaderId && !uploaderId.startsWith('author-')) {
-      const medium = getWorkMediumDescriptor(work.type);
-      sendUploaderNotification({
-        recipientUserId: uploaderId,
-        senderUserId: userId,
-        senderName: userName,
-        senderAvatar: userAvatar,
-        type: 'like',
-        title: `Your published ${medium} received a like!`,
-        message: `${userName} liked your published ${medium} "${work.title}".`,
-        link: `/work/${work.slug}`,
-        workId: work.id,
-        workSlug: work.slug,
-        workTitle: work.title,
-      }).catch((err) => console.warn('sendUploaderNotification error:', err));
-    }
-  }
-
-  // Firestore sync
-  if (db) {
-    const likeDocRef = doc(db, 'works', workId, 'likes', userId);
-    try {
       if (willLike) {
         const likeRecord: WorkLike = {
           id: `like-${workId}-${userId}`,
@@ -206,36 +269,129 @@ export async function toggleWorkLike(
           userAvatar,
           likedAt: new Date().toISOString(),
         };
+        // Throw on failure so the caller can roll back optimistic UI
         await setDoc(likeDocRef, likeRecord);
       } else {
+        // Throw on failure so the caller can roll back optimistic UI
         await deleteDoc(likeDocRef);
       }
-    } catch (err) {
-      console.warn('Firestore toggleWorkLike error:', err);
-    }
-  }
 
-  return { liked: willLike, count: localLikes.length };
+      // Atomically sync live likesCount on parent work document in Firestore
+      // so all other devices listening to works collection update simultaneously in real-time
+      const workDocRef = doc(db, 'works', workId);
+      try {
+        await updateDoc(workDocRef, {
+          likesCount: increment(willLike ? 1 : -1),
+          updatedAt: new Date().toISOString(),
+        });
+      } catch {
+        try {
+          await setDoc(
+            workDocRef,
+            {
+              likesCount: willLike ? 1 : 0,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch (e) {
+          console.warn('Could not update work doc likesCount:', e);
+        }
+      }
+    } else {
+      // Local fallback mode when database is not configured
+      const existingIndex = previousLocalLikes.findIndex((l) => l.userId === userId);
+      willLike = existingIndex === -1;
+    }
+
+    // Keep in-memory work likesCount in sync
+    if (typeof work.likesCount === 'number') {
+      work.likesCount = Math.max(0, work.likesCount + (willLike ? 1 : -1));
+    } else {
+      work.likesCount = willLike ? 1 : 0;
+    }
+
+    // Update local cache only after successful remote write
+    const nextLocalLikes = previousLocalLikes.filter((l) => l.userId !== userId);
+    if (willLike) {
+      nextLocalLikes.push({
+        id: `like-${workId}-${userId}`,
+        workId,
+        userId,
+        userName,
+        userAvatar,
+        likedAt: new Date().toISOString(),
+      });
+    }
+    const sanitized = sanitizeLikes(nextLocalLikes);
+    saveLocalLikes(workId, sanitized);
+
+    // Cross-component broadcast event
+    try {
+      window.dispatchEvent(
+        new CustomEvent('getnow:likes-updated', {
+          detail: { workId, likes: sanitized, liked: willLike, count: sanitized.length },
+        })
+      );
+    } catch {}
+
+    // Send notification to uploader when a like is added
+    if (willLike) {
+      const uploaderId = work.uploaderId || work.publisherId;
+      if (uploaderId && !uploaderId.startsWith('author-') && uploaderId !== userId) {
+        const medium = getWorkMediumDescriptor(work.type);
+        sendUploaderNotification({
+          recipientUserId: uploaderId,
+          senderUserId: userId,
+          senderName: userName,
+          senderAvatar: userAvatar,
+          type: 'like',
+          title: `Your published ${medium} received a like!`,
+          message: `${userName} liked your published ${medium} "${work.title}".`,
+          link: `/work/${work.slug}`,
+          workId: work.id,
+          workSlug: work.slug,
+          workTitle: work.title,
+        }).catch((err) => console.warn('sendUploaderNotification error:', err));
+      }
+    }
+
+    return { liked: willLike, count: sanitized.length };
+  })();
+
+  inFlightLikeLocks.set(lockKey, toggleOperation);
+
+  try {
+    return await toggleOperation;
+  } finally {
+    inFlightLikeLocks.delete(lockKey);
+  }
 }
 
 /**
  * Real-time listener for likes on a specific work.
+ * Relies directly on Firestore as the source of truth without resurrecting unliked records.
  */
 export function subscribeWorkLikes(
   workId: string,
   currentUserId: string | undefined,
   callback: (likes: WorkLike[], isLiked: boolean) => void
 ): () => void {
-  // Emit local cache immediately
+  const isUserAuthenticated = Boolean(currentUserId && !currentUserId.startsWith('guest-'));
+
+  // Emit current cached likes immediately for 0ms initial render
   const initialLocal = getLocalLikes(workId);
-  callback(initialLocal, Boolean(currentUserId && initialLocal.some((l) => l.userId === currentUserId)));
+  callback(
+    initialLocal,
+    Boolean(isUserAuthenticated && initialLocal.some((l) => l.userId === currentUserId))
+  );
 
   // Listen to cross-component custom event for instant updates
   const handleLikesEvent = (e: Event) => {
     const custom = e as CustomEvent;
     if (custom.detail?.workId === workId) {
       const current = getLocalLikes(workId);
-      const isLiked = Boolean(currentUserId && current.some((l) => l.userId === currentUserId));
+      const isLiked = Boolean(isUserAuthenticated && current.some((l) => l.userId === currentUserId));
       callback(current, isLiked);
     }
   };
@@ -253,19 +409,27 @@ export function subscribeWorkLikes(
     (snapshot) => {
       const remoteLikes: WorkLike[] = [];
       snapshot.forEach((d) => {
-        remoteLikes.push(d.data() as WorkLike);
+        const data = d.data() as WorkLike;
+        if (data && data.userId && !data.userId.startsWith('guest-')) {
+          remoteLikes.push(data);
+        }
       });
 
-      const local = getLocalLikes(workId);
-      const combinedMap = new Map<string, WorkLike>();
-      local.forEach(l => combinedMap.set(l.userId || l.id, l));
-      remoteLikes.forEach(l => combinedMap.set(l.userId || l.id, l));
+      // Firestore is the single source of truth: do not re-add remotely deleted likes from localStorage
+      const sanitized = sanitizeLikes(remoteLikes);
+      saveLocalLikes(workId, sanitized);
 
-      const merged = Array.from(combinedMap.values());
-      saveLocalLikes(workId, merged);
+      const isLiked = Boolean(isUserAuthenticated && sanitized.some((l) => l.userId === currentUserId));
+      callback(sanitized, isLiked);
 
-      const isLiked = Boolean(currentUserId && merged.some((l) => l.userId === currentUserId));
-      callback(merged, isLiked);
+      // Broadcast real-time change to all components and shelves on this device
+      try {
+        window.dispatchEvent(
+          new CustomEvent('getnow:likes-updated', {
+            detail: { workId, likes: sanitized, liked: isLiked, count: sanitized.length },
+          })
+        );
+      } catch {}
     },
     (err) => {
       console.warn(`subscribeWorkLikes error for ${workId}:`, err);
@@ -549,11 +713,44 @@ export async function addWorkComment(
     } catch (err) {
       console.warn('Firestore addWorkComment error:', err);
     }
+
+    // Atomically sync live commentsCount on parent work document in Firestore
+    const workDocRef = doc(db, 'works', workId);
+    try {
+      await updateDoc(workDocRef, {
+        commentsCount: increment(1),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {
+      try {
+        await setDoc(
+          workDocRef,
+          {
+            commentsCount: 1,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('Could not update work commentsCount in Firestore:', err);
+      }
+    }
+  }
+
+  // Keep in-memory work commentsCount in sync
+  if (typeof work.commentsCount === 'number') {
+    work.commentsCount += 1;
+  } else {
+    work.commentsCount = 1;
   }
 
   // Dispatch custom event for instant cross-component reactivity
   try {
-    window.dispatchEvent(new CustomEvent('getnow:comments-updated', { detail: { workId, comment: newComment } }));
+    window.dispatchEvent(
+      new CustomEvent('getnow:comments-updated', {
+        detail: { workId, comment: newComment, count: updatedComments.length },
+      })
+    );
   } catch {}
 
   return newComment;
@@ -572,7 +769,7 @@ export function subscribeWorkComments(
     try {
       deletedIds = JSON.parse(localStorage.getItem(`getnow_deleted_comments_${workId}`) || '[]');
     } catch {}
-    return local.filter(c => !deletedIds.includes(c.id));
+    return local.filter((c) => !deletedIds.includes(c.id));
   };
 
   // Emit local cache immediately (filtered)
@@ -611,16 +808,32 @@ export function subscribeWorkComments(
         }
       });
 
+      // Firestore is the authoritative remote truth: preserve pending local comments only
       const local = getFilteredLocal();
       const combinedMap = new Map<string, WorkComment>();
-      local.forEach(c => combinedMap.set(c.id, c));
-      remoteList.forEach(c => combinedMap.set(c.id, c));
+      // Remote docs first
+      remoteList.forEach((c) => combinedMap.set(c.id, c));
+      // Add any local pending comments that haven't been written to Firestore yet
+      local.forEach((c) => {
+        if (!combinedMap.has(c.id) && c.id.startsWith('comm-pending-')) {
+          combinedMap.set(c.id, c);
+        }
+      });
 
-      const merged = Array.from(combinedMap.values()).filter(c => !deletedIds.includes(c.id));
+      const merged = Array.from(combinedMap.values()).filter((c) => !deletedIds.includes(c.id));
       merged.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      
+
       saveLocalComments(workId, merged);
       callback(merged);
+
+      // Broadcast to other components on this device
+      try {
+        window.dispatchEvent(
+          new CustomEvent('getnow:comments-updated', {
+            detail: { workId, comments: merged, count: merged.length },
+          })
+        );
+      } catch {}
     },
     (err) => {
       console.debug(`subscribeWorkComments for ${workId}:`, err);
@@ -655,10 +868,23 @@ export async function deleteWorkComment(workId: string, commentId: string): Prom
     } catch (err) {
       console.warn('Firestore deleteWorkComment error:', err);
     }
+
+    // Atomically decrement commentsCount on parent work document
+    const workDocRef = doc(db, 'works', workId);
+    try {
+      await updateDoc(workDocRef, {
+        commentsCount: increment(-1),
+        updatedAt: new Date().toISOString(),
+      });
+    } catch {}
   }
 
   try {
-    window.dispatchEvent(new CustomEvent('getnow:comments-updated', { detail: { workId, deletedCommentId: commentId } }));
+    window.dispatchEvent(
+      new CustomEvent('getnow:comments-updated', {
+        detail: { workId, deletedCommentId: commentId, count: updatedLocal.length },
+      })
+    );
   } catch {}
 }
 

@@ -21,6 +21,7 @@ import {
   Settings,
   Shield
 } from 'lucide-react';
+import { PwaInstallPrompt } from '../pwa/PwaInstallPrompt';
 
 export const LeftNavSidebar: React.FC = () => {
   const { path, searchParams, navigate } = useRouter();
@@ -204,6 +205,9 @@ export const LeftNavSidebar: React.FC = () => {
           <Download className="w-4 h-4 text-emerald-500" />
           <span>Downloads</span>
         </button>
+
+        {/* ── Install App (PWA) ── */}
+        <PwaInstallPrompt variant="sidebar" />
       </div>
 
       {/* ── Reader Account Profile Box ─────────────────── */}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useLibrary } from '../../context/LibraryContext';
 import { useAuth } from '../../context/AuthContext';
@@ -6,7 +6,13 @@ import { useRouter } from '../../context/RouterContext';
 import { Work, Chapter, WorkType } from '../../types';
 import { generateGhostCoverSvg, GHOST_COVER_PALETTES } from '../../services/coverService';
 import { apiUrl, resolveMediaUrl } from '../../services/apiConfig';
-import * as pdfjsLib from 'pdfjs-dist';
+import { auth } from '../../firebase';
+import { mediaProcessingService } from '../../services/mediaProcessingService';
+import {
+  uploadFileWithResilientChunks,
+  uploadPagesResiliently,
+  ResumableUploadError,
+} from '../../services/resilientUploadService';
 import {
   X,
   Upload,
@@ -22,14 +28,28 @@ import {
   ArrowRight,
   ShieldCheck,
   User,
+  CheckCircle2,
+  AlertTriangle,
+  Wifi,
+  WifiOff,
+  RotateCcw,
+  Info,
+  RefreshCw,
 } from 'lucide-react';
-
-// Configure pdf.js worker using CDN
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 interface PublishWorkModalProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+export interface PublishToast {
+  id: string;
+  type: 'success' | 'warning' | 'error' | 'info';
+  title?: string;
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  persistent?: boolean;
 }
 
 export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onClose }) => {
@@ -55,6 +75,62 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
   ]);
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+  const [uploadPercent, setUploadPercent] = useState(0);
+
+  // Network Resilience & Toast State
+  const [toast, setToast] = useState<PublishToast | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retryInfo, setRetryInfo] = useState<{ attempt: number; max: number } | null>(null);
+  const [resumableSession, setResumableSession] = useState<{
+    file: File;
+    uploadId: string;
+    fileType: 'archive' | 'cover';
+    completedChunks: number[];
+    totalChunks: number;
+  } | null>(null);
+
+  const showToast = (
+    message: string,
+    type: 'success' | 'warning' | 'error' | 'info' = 'info',
+    options?: { title?: string; actionLabel?: string; onAction?: () => void; persistent?: boolean }
+  ) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToast({
+      id,
+      type,
+      message,
+      title: options?.title,
+      actionLabel: options?.actionLabel,
+      onAction: options?.onAction,
+      persistent: options?.persistent,
+    });
+  };
+
+  useEffect(() => {
+    if (!toast || toast.persistent) return;
+    const t = setTimeout(() => setToast(null), 7000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const handleCancelProcessing = () => {
+    mediaProcessingService.cancelCurrentTask();
+    setIsProcessingFile(false);
+    setIsRetrying(false);
+    setRetryInfo(null);
+    setUploadProgress('');
+    setUploadPercent(0);
+    showToast('Upload / extraction cancelled by user.', 'info');
+  };
+
+  const handleClose = () => {
+    if (isProcessingFile) {
+      mediaProcessingService.cancelCurrentTask();
+      setIsProcessingFile(false);
+      setIsRetrying(false);
+      setRetryInfo(null);
+    }
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -71,33 +147,83 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
     }
   };
 
-  // Handle Cover Image Upload with Server-side WebP Optimization
+  // Helper to get authenticated bearer token headers
+  const getAuthHeaders = async (): Promise<Record<string, string>> => {
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        return { Authorization: `Bearer ${token}` };
+      }
+    } catch {}
+    return {};
+  };
+
+  // Handle Cover Image Upload with Server-side WebP Optimization and retry
   const handleCoverUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!auth.currentUser || auth.currentUser.isAnonymous) {
+      showToast('Please sign into your reader account before uploading custom cover art.', 'warning');
+      openAuthModal('signin');
+      return;
+    }
+
     setIsProcessingFile(true);
+    setIsRetrying(false);
     setUploadProgress('Uploading and optimizing cover art...');
+    setUploadPercent(15);
 
     try {
-      const formData = new FormData();
-      formData.append('cover', file);
-      const res = await fetch(apiUrl('/api/media/upload-cover'), {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.coverUrl) {
-          setCustomCoverUrl(resolveMediaUrl(data.coverUrl));
+      if (file.size > 5 * 1024 * 1024) {
+        // Use resilient chunking for large covers
+        const result = await uploadFileWithResilientChunks<{ coverUrl?: string }>(file, 'cover', {
+          onProgress: (pState) => {
+            setUploadProgress(pState.message);
+            setUploadPercent(pState.percent);
+            setIsRetrying(Boolean(pState.isRetrying));
+            if (pState.retryAttempt && pState.maxRetries) {
+              setRetryInfo({ attempt: pState.retryAttempt, max: pState.maxRetries });
+            } else {
+              setRetryInfo(null);
+            }
+          },
+        });
+        if (result.coverUrl) {
+          setCustomCoverUrl(resolveMediaUrl(result.coverUrl));
+          showToast('Cover art uploaded and optimized successfully!', 'success');
           setIsProcessingFile(false);
           setUploadProgress('');
           return;
         }
+      } else {
+        const headers = await getAuthHeaders();
+        const formData = new FormData();
+        formData.append('cover', file);
+        const res = await fetch(apiUrl('/api/media/upload-cover'), {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.coverUrl) {
+            setCustomCoverUrl(resolveMediaUrl(data.coverUrl));
+            showToast('Cover art uploaded successfully!', 'success');
+            setIsProcessingFile(false);
+            setUploadProgress('');
+            return;
+          }
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Media server upload unavailable, using client preview:', err);
+      showToast('Media server upload unavailable, using client preview cover.', 'info');
+    } finally {
+      setIsProcessingFile(false);
+      setIsRetrying(false);
+      setRetryInfo(null);
     }
 
     // Fallback client reader
@@ -106,158 +232,349 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
       if (evt.target?.result) {
         setCustomCoverUrl(evt.target.result as string);
       }
-      setIsProcessingFile(false);
-      setUploadProgress('');
     };
     reader.readAsDataURL(file);
   };
 
-  // Handle Full Manga/Comic Volume Archive (.CBZ or .ZIP up to 350 MB)
+  // Resume interrupted chunked upload
+  const handleResumeUpload = async () => {
+    if (!resumableSession) return;
+    const { file, uploadId, fileType } = resumableSession;
+    setIsProcessingFile(true);
+    setIsRetrying(false);
+    setToast(null);
+
+    const chapterTitle = file.name.replace(/\.(cbz|zip)$/i, '');
+    const slug = (title || chapterTitle)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
+    try {
+      const result = await uploadFileWithResilientChunks<{ pages?: string[]; total?: number; coverUrl?: string }>(
+        file,
+        fileType,
+        {
+          uploadId,
+          workSlug: slug || `manga-${Date.now()}`,
+          onProgress: (pState) => {
+            setUploadProgress(pState.message);
+            setUploadPercent(pState.percent);
+            setIsRetrying(Boolean(pState.isRetrying));
+            if (pState.retryAttempt && pState.maxRetries) {
+              setRetryInfo({ attempt: pState.retryAttempt, max: pState.maxRetries });
+            } else {
+              setRetryInfo(null);
+            }
+          },
+        }
+      );
+
+      if (result.pages && result.pages.length > 0) {
+        setChapters([
+          {
+            title: chapterTitle,
+            pages: result.pages.map((p: string) => resolveMediaUrl(p)),
+          },
+        ]);
+        showToast(`Successfully resumed and synchronized ${result.total || result.pages.length} manga pages!`, 'success');
+      } else if (result.coverUrl) {
+        setCustomCoverUrl(resolveMediaUrl(result.coverUrl));
+        showToast('Successfully resumed and saved cover art!', 'success');
+      }
+      setResumableSession(null);
+    } catch (err: any) {
+      if (err instanceof ResumableUploadError) {
+        setResumableSession({
+          file,
+          uploadId: err.uploadId,
+          fileType,
+          completedChunks: err.completedChunks,
+          totalChunks: err.totalChunks,
+        });
+        showToast(`Upload paused: ${err.message}`, 'warning', {
+          actionLabel: 'Resume Upload',
+          onAction: () => handleResumeUpload(),
+          persistent: true,
+        });
+      } else {
+        showToast(`Resume failed: ${err?.message || 'Network disconnected'}`, 'error');
+      }
+    } finally {
+      setIsProcessingFile(false);
+      setIsRetrying(false);
+      setRetryInfo(null);
+    }
+  };
+
+  // Handle Full Manga/Comic Volume Archive (.CBZ or .ZIP up to 350 MB) using Web Worker & Resilient Chunks
   const handleArchiveUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!auth.currentUser || auth.currentUser.isAnonymous) {
+      showToast('Please sign into your reader account before uploading manga or comic archives.', 'warning');
+      openAuthModal('signin');
+      return;
+    }
+
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+    setIsProcessingFile(true);
+    setIsRetrying(false);
+    setRetryInfo(null);
+    setResumableSession(null);
+    setUploadPercent(5);
+    setUploadProgress(`Inspecting archive ${file.name} (${sizeMb} MB)...`);
+
+    try {
+      // 1. Offload heavy ZIP/CBZ decompression, security checks, and natural sorting to Web Worker
+      const result = await mediaProcessingService.processArchive(file, (status, pct) => {
+        setUploadProgress(status);
+        if (typeof pct === 'number') setUploadPercent(pct);
+      });
+
+      const chapterTitle = file.name.replace(/\.(cbz|zip)$/i, '');
+      if (!title && result.suggestedTitle) {
+        setTitle(result.suggestedTitle);
+      }
+
+      // If user hasn't uploaded custom cover art yet, auto-set page 1 as cover preview
+      if (!customCoverUrl && result.coverUrl) {
+        setCustomCoverUrl(result.coverUrl);
+      }
+
+      // Populate chapters immediately with client-extracted object URLs
+      setChapters([
+        {
+          title: chapterTitle,
+          pages: result.pages.map((p) => p.url),
+        },
+      ]);
+
+      // 2. Stream to server media storage endpoint with resilient chunking and auto-retry
+      setUploadProgress(`Synchronizing ${result.total} manga pages with library storage...`);
+      setUploadPercent(40);
+
+      const slug = (title || chapterTitle)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+
+      try {
+        if (file.size > 5 * 1024 * 1024) {
+          // Use resumable chunked upload with automatic exponential backoff
+          const chunkResult = await uploadFileWithResilientChunks<{ pages?: string[]; total?: number }>(
+            file,
+            'archive',
+            {
+              workSlug: slug || `manga-${Date.now()}`,
+              onProgress: (pState) => {
+                setUploadProgress(pState.message);
+                setUploadPercent(pState.percent);
+                setIsRetrying(Boolean(pState.isRetrying));
+                if (pState.retryAttempt && pState.maxRetries) {
+                  setRetryInfo({ attempt: pState.retryAttempt, max: pState.maxRetries });
+                } else {
+                  setRetryInfo(null);
+                }
+              },
+            }
+          );
+
+          if (chunkResult.pages && chunkResult.pages.length > 0) {
+            setChapters([
+              {
+                title: chapterTitle,
+                pages: chunkResult.pages.map((p: string) => resolveMediaUrl(p)),
+              },
+            ]);
+            setUploadProgress(`Successfully processed ${chunkResult.total || chunkResult.pages.length} manga pages!`);
+            setUploadPercent(100);
+            showToast(`Archive processed and verified (${chunkResult.total} pages synchronized)!`, 'success');
+            return;
+          }
+        } else {
+          const headers = await getAuthHeaders();
+          const formData = new FormData();
+          formData.append('archive', file);
+          formData.append('workSlug', slug || `manga-${Date.now()}`);
+
+          const res = await fetch(apiUrl('/api/media/upload-archive'), {
+            method: 'POST',
+            headers,
+            body: formData,
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.pages && data.pages.length > 0) {
+              setChapters([
+                {
+                  title: chapterTitle,
+                  pages: data.pages.map((p: string) => resolveMediaUrl(p)),
+                },
+              ]);
+              setUploadProgress(`Successfully processed ${data.total} manga pages!`);
+              setUploadPercent(100);
+              showToast(`Archive verified (${data.total} pages)!`, 'success');
+              return;
+            }
+          }
+        }
+      } catch (netErr: any) {
+        if (netErr instanceof ResumableUploadError) {
+          setResumableSession({
+            file,
+            uploadId: netErr.uploadId,
+            fileType: 'archive',
+            completedChunks: netErr.completedChunks,
+            totalChunks: netErr.totalChunks,
+          });
+          showToast(
+            `Network interrupted: ${netErr.completedChunks.length} of ${netErr.totalChunks} chunks saved. Click 'Resume Upload' to continue.`,
+            'warning',
+            {
+              actionLabel: 'Resume Upload',
+              onAction: () => handleResumeUpload(),
+              persistent: true,
+            }
+          );
+        } else {
+          console.warn('Media server archive endpoint unavailable, keeping verified client-worker pages:', netErr);
+          showToast('Media server unavailable. Kept client-extracted preview pages.', 'info');
+        }
+      }
+
+      setUploadProgress(`Successfully extracted ${result.total} manga pages!`);
+      setUploadPercent(100);
+    } catch (err: any) {
+      if (err.message?.includes('cancelled')) {
+        setUploadProgress('Archive processing cancelled.');
+        showToast('Archive processing cancelled.', 'info');
+        return;
+      }
+      console.error('Archive processing error:', err);
+      showToast(`Archive processing failed: ${err.message || 'Please check the file format'}`, 'error');
+    } finally {
+      setIsProcessingFile(false);
+      setIsRetrying(false);
+      setRetryInfo(null);
+    }
+  };
+
+  // Handle PDF File Upload & Extraction into Chapters/Pages using Web Worker & Resilient Page Upload
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
     setIsProcessingFile(true);
-    setUploadProgress(`Uploading & extracting ${file.name} (${sizeMb} MB)...`);
+    setIsRetrying(false);
+    setRetryInfo(null);
+    setUploadPercent(5);
+    setUploadProgress(`Reading PDF document (${sizeMb} MB)...`);
 
     try {
-      const formData = new FormData();
-      formData.append('archive', file);
-      const slug = (title || file.name.replace(/\.(cbz|zip)$/i, ''))
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/(^-|-$)/g, '');
-      formData.append('workSlug', slug || `manga-${Date.now()}`);
-
-      const res = await fetch(apiUrl('/api/media/upload-archive'), {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({ error: 'Upload failed' }));
-        throw new Error(errData.error || 'Server error extracting volume');
-      }
-
-      const data = await res.json();
-      if (data.pages && data.pages.length > 0) {
-        setChapters([
-          {
-            title: file.name.replace(/\.(cbz|zip)$/i, ''),
-            pages: data.pages.map((p: string) => resolveMediaUrl(p)),
-          },
-        ]);
-        if (!title) {
-          setTitle(file.name.replace(/\.(cbz|zip)$/i, ''));
-        }
-        setUploadProgress(`Successfully processed ${data.total} manga pages!`);
-      } else {
-        throw new Error('No valid image pages found inside archive');
-      }
-    } catch (err: any) {
-      console.error('Archive processing error:', err);
-      alert(`Archive processing failed: ${err.message || 'Please check the file format'}`);
-    } finally {
-      setIsProcessingFile(false);
-    }
-  };
-
-  // Handle PDF File Upload & Extraction into Chapters/Pages
-  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsProcessingFile(true);
-    setUploadProgress('Reading PDF document...');
-
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const totalPages = pdf.numPages;
-
       if (type === 'comic' || type === 'manga') {
-        // Render PDF pages and stream to media endpoint
-        const pageBlobs: Blob[] = [];
-        for (let i = 1; i <= Math.min(totalPages, 100); i++) {
-          setUploadProgress(`Rendering page ${i} of ${totalPages}...`);
-          const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 1.5 });
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
+        // Offload PDF page rendering to Web Worker (using OffscreenCanvas or chunked fallback)
+        const result = await mediaProcessingService.processPdfComic(file, (status, pct) => {
+          setUploadProgress(status);
+          if (typeof pct === 'number') setUploadPercent(pct);
+        });
 
-          if (context) {
-            await (page as any).render({ canvasContext: context, viewport }).promise;
-            const blob = await new Promise<Blob | null>((resolve) =>
-              canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.88)
-            );
-            if (blob) pageBlobs.push(blob);
-          }
+        const chapterTitle = file.name.replace(/\.pdf$/i, '');
+        if (!title && result.suggestedTitle) {
+          setTitle(result.suggestedTitle);
         }
 
-        // Upload to server media endpoint in batches
-        setUploadProgress(`Uploading ${pageBlobs.length} pages to media storage...`);
-        const slug = (title || file.name.replace(/\.pdf$/i, ''))
+        if (!customCoverUrl && result.coverUrl) {
+          setCustomCoverUrl(result.coverUrl);
+        }
+
+        const localUrls = result.pages.map((p) => p.url);
+        setChapters([{ title: chapterTitle, pages: localUrls }]);
+
+        // Upload pages to server media endpoint with resilient batching & automatic retry
+        setUploadProgress(`Uploading ${result.pages.length} pages to media storage...`);
+        setUploadPercent(60);
+
+        const slug = (title || chapterTitle)
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/(^-|-$)/g, '');
 
-        const formData = new FormData();
-        formData.append('workSlug', slug || `manga-${Date.now()}`);
-        pageBlobs.forEach((b, idx) => {
-          formData.append('pages', b, `page_${idx + 1}.jpg`);
-        });
+        try {
+          const uploadedUrls = await uploadPagesResiliently(result.pages, {
+            workSlug: slug || `manga-${Date.now()}`,
+            batchSize: 10,
+            onProgress: (pState) => {
+              setUploadProgress(pState.message);
+              setUploadPercent(60 + Math.round(pState.percent * 0.4));
+              setIsRetrying(Boolean(pState.isRetrying));
+            },
+          });
 
-        const res = await fetch(apiUrl('/api/media/upload-pages'), {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.pageUrls) {
-            setChapters([{ title: file.name.replace(/\.pdf$/i, ''), pages: data.pageUrls.map((p: string) => resolveMediaUrl(p)) }]);
+          if (uploadedUrls.length > 0) {
+            setChapters([
+              {
+                title: chapterTitle,
+                pages: uploadedUrls.map((p: string) => resolveMediaUrl(p)),
+              },
+            ]);
+            showToast(`Synchronized ${uploadedUrls.length} comic pages to media storage!`, 'success');
           }
-        } else {
-          // Fallback to local object URLs if server unreachable
-          const localUrls = pageBlobs.map((b) => URL.createObjectURL(b));
-          setChapters([{ title: file.name.replace(/\.pdf$/i, ''), pages: localUrls }]);
+        } catch (uploadErr: any) {
+          console.warn('Server page upload incomplete, keeping worker-extracted pages:', uploadErr);
+          showToast(`Server sync incomplete: ${uploadErr.message}. Keeping local preview pages.`, 'warning');
         }
+
+        setUploadProgress(`Processed ${result.pages.length} comic pages!`);
+        setUploadPercent(100);
       } else {
-        // Extract text for Books/Novels
-        let fullText = '';
-        for (let i = 1; i <= totalPages; i++) {
-          setUploadProgress(`Extracting page text ${i} of ${totalPages}...`);
-          const page = await pdf.getPage(i);
-          const textContent = await page.getTextContent();
-          const pageText = textContent.items.map((item: any) => item.str).join(' ');
-          fullText += `\n\n--- Page ${i} ---\n\n` + pageText;
+        // Books/Novels: Offload text extraction to Web Worker off main thread
+        const result = await mediaProcessingService.processPdfBook(file, (status, pct) => {
+          setUploadProgress(status);
+          if (typeof pct === 'number') setUploadPercent(pct);
+        });
+
+        if (!title && result.suggestedTitle) {
+          setTitle(result.suggestedTitle);
         }
 
-        // Split by chapters if available, or single full text
-        setChapters([{ title: 'Full Work', text: fullText.trim() }]);
+        setChapters(result.chapters);
+        setUploadProgress(`Extracted full text across ${result.totalPages} pages!`);
+        setUploadPercent(100);
+        showToast(`Extracted prose text across ${result.totalPages} pages!`, 'success');
       }
-
-      if (!title) {
-        setTitle(file.name.replace(/\.pdf$/i, ''));
+    } catch (err: any) {
+      if (err.message?.includes('cancelled')) {
+        setUploadProgress('PDF processing cancelled.');
+        showToast('PDF processing cancelled.', 'info');
+        return;
       }
-      setUploadProgress('Document import complete!');
-    } catch (err) {
       console.error('PDF parsing error:', err);
-      alert('Failed to parse PDF file. Please ensure it is a valid PDF.');
+      showToast(`Failed to parse PDF: ${err.message || 'Please ensure it is a valid PDF.'}`, 'error');
     } finally {
       setIsProcessingFile(false);
+      setIsRetrying(false);
+      setRetryInfo(null);
     }
   };
 
-  // Handle Multi-Image Pages Upload with Batch Server Processing
+  // Handle Multi-Image Pages Upload with Resilient Batching & Exponential Retry
   const handleImagePagesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
+    if (!auth.currentUser || auth.currentUser.isAnonymous) {
+      showToast('Please sign into your reader account before uploading manga pages.', 'warning');
+      openAuthModal('signin');
+      return;
+    }
+
     setIsProcessingFile(true);
+    setIsRetrying(false);
+    setRetryInfo(null);
     setUploadProgress(`Uploading & optimizing ${files.length} manga pages...`);
 
     try {
@@ -266,59 +583,52 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)/g, '');
 
-      const batchSize = 30;
-      let allPageUrls: string[] = [];
+      const pageBlobs = files.map((f, i) => ({
+        blob: f,
+        fileName: f.name || `page_${i + 1}.jpg`,
+      }));
 
-      for (let i = 0; i < files.length; i += batchSize) {
-        const batch = files.slice(i, i + batchSize);
-        setUploadProgress(`Processing pages ${i + 1} to ${Math.min(i + batchSize, files.length)} of ${files.length}...`);
+      const uploadedUrls = await uploadPagesResiliently(pageBlobs, {
+        workSlug: slug || `manga-${Date.now()}`,
+        batchSize: 10,
+        onProgress: (pState) => {
+          setUploadProgress(pState.message);
+          setUploadPercent(pState.percent);
+          setIsRetrying(Boolean(pState.isRetrying));
+        },
+      });
 
-        const formData = new FormData();
-        formData.append('workSlug', slug || `manga-${Date.now()}`);
-        batch.forEach((f) => formData.append('pages', f));
-
-        const res = await fetch(apiUrl('/api/media/upload-pages'), {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data.pageUrls) {
-            allPageUrls = allPageUrls.concat(data.pageUrls.map((p: string) => resolveMediaUrl(p)));
-          }
-        } else {
-          // Local fallback URL
-          const localUrls = batch.map((f) => URL.createObjectURL(f));
-          allPageUrls = allPageUrls.concat(localUrls);
-        }
-      }
-
-      setChapters([{ title: 'Chapter 1', pages: allPageUrls }]);
-      setUploadProgress(`Successfully loaded ${allPageUrls.length} pages!`);
+      setChapters([{ title: 'Chapter 1', pages: uploadedUrls.map((p) => resolveMediaUrl(p)) }]);
+      setUploadProgress(`Successfully loaded ${uploadedUrls.length} pages!`);
+      showToast(`Successfully uploaded & optimized ${uploadedUrls.length} pages!`, 'success');
     } catch (err: any) {
       console.error('Page upload error:', err);
-      alert('Failed to upload pages: ' + (err.message || ''));
+      // Fallback local URLs
+      const localUrls = files.map((f) => URL.createObjectURL(f));
+      setChapters([{ title: 'Chapter 1', pages: localUrls }]);
+      showToast(`Page upload issue: ${err.message || ''}. Retained local preview.`, 'warning');
     } finally {
       setIsProcessingFile(false);
+      setIsRetrying(false);
+      setRetryInfo(null);
     }
   };
 
   const handlePublish = () => {
     if (!isAuthenticated) {
-      alert('Account required: Please log into or create a reader account before publishing works so administrators can identify and attribute your uploads.');
+      showToast('Account required: Please log into or create a reader account before publishing works.', 'warning');
       onClose();
       openAuthModal('signin');
       return;
     }
 
     if (!title.trim()) {
-      alert('Please enter a title for your work.');
+      showToast('Please enter a title for your work.', 'warning');
       return;
     }
 
     if (isUserBanned(currentUser?.uid, currentUser?.email || '')) {
-      alert('Your account is currently restricted from publishing content by an administrator. If you believe this is an error, please reach out to support.');
+      showToast('Your account is currently restricted from publishing content by an administrator.', 'error');
       return;
     }
 
@@ -418,7 +728,7 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
       aria-modal="true"
     >
       {/* Click outside backdrop to close */}
-      <div className="fixed inset-0" onClick={onClose} aria-hidden="true" />
+      <div className="fixed inset-0" onClick={handleClose} aria-hidden="true" />
 
       {/* Modal Box */}
       <div
@@ -427,7 +737,7 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
       >
         
         {/* Header (Pinned) */}
-        <div className="px-5 py-4 sm:px-6 border-b border-stone-200/80 dark:border-stone-800 bg-white dark:bg-[#12141A] shrink-0">
+        <div className="px-5 py-4 sm:px-6 border-b border-stone-200/80 dark:border-stone-800 bg-white dark:bg-[#12141A] shrink-0 flex items-center justify-between">
           <div>
             <h3 className="font-serif font-bold text-base sm:text-lg text-stone-900 dark:text-stone-100 leading-tight">
               Publish &amp; Share Your Creation
@@ -436,6 +746,14 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
               Self-publish books, comics, or manga on the Open Digital Library
             </p>
           </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close publish dialog"
+            className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Wizard Steps indicator (Pinned) */}
@@ -456,6 +774,52 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
             <span className="xs:hidden">Step 3</span>
           </div>
         </div>
+
+        {/* Toast Feedback Notification Banner */}
+        {toast && (
+          <div
+            className={`mx-4 sm:mx-6 mt-3 p-3 rounded-xl border flex items-center justify-between gap-3 text-xs shadow-md transition-all animate-in fade-in slide-in-from-top-1 shrink-0 ${
+              toast.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-100'
+                : toast.type === 'warning'
+                ? 'bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-100'
+                : toast.type === 'error'
+                ? 'bg-rose-50 dark:bg-rose-950/70 border-rose-300 dark:border-rose-800 text-rose-900 dark:text-rose-100'
+                : 'bg-stone-100 dark:bg-stone-800 border-stone-300 dark:border-stone-700 text-stone-900 dark:text-stone-100'
+            }`}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              {toast.type === 'success' && <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />}
+              {toast.type === 'warning' && <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />}
+              {toast.type === 'error' && <WifiOff className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />}
+              {toast.type === 'info' && <Info className="w-4 h-4 text-stone-600 dark:text-stone-400 shrink-0" />}
+              <div className="min-w-0">
+                {toast.title && <div className="font-bold leading-tight">{toast.title}</div>}
+                <div className="text-xs leading-normal">{toast.message}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {toast.actionLabel && toast.onAction && (
+                <button
+                  type="button"
+                  onClick={toast.onAction}
+                  className="px-3 py-1 text-xs font-bold bg-[#C25E3A] hover:bg-[#a84e2e] text-white rounded-lg transition-colors cursor-pointer shadow-xs inline-flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>{toast.actionLabel}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setToast(null)}
+                aria-label="Dismiss notification"
+                className="p-1 rounded text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 cursor-pointer transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Content Body (Scrollable) */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-4 sm:space-y-5 flex-1 min-h-0">
@@ -716,10 +1080,88 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
                   </label>
                 </div>
 
+                {/* Resumable Session Recovery Card */}
+                {resumableSession && (
+                  <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/40 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
+                        <WifiOff className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span>Resumable Upload Interrupted</span>
+                      </div>
+                      <span className="text-[10px] font-mono bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded font-semibold">
+                        {resumableSession.completedChunks.length} / {resumableSession.totalChunks} chunks saved
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                      Network was interrupted while uploading <span className="font-semibold">{resumableSession.file.name}</span>. You can resume without losing previously transferred data or keep locally extracted preview pages.
+                    </p>
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={handleResumeUpload}
+                        className="px-3 py-1.5 bg-[#C25E3A] hover:bg-[#a84e2e] text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Resume Upload</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResumableSession(null);
+                          showToast('Retained locally extracted pages without server upload.', 'info');
+                        }}
+                        className="px-3 py-1.5 text-xs text-stone-600 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-800 rounded-lg transition-colors cursor-pointer"
+                      >
+                        Keep Client Extraction
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {isProcessingFile && (
-                  <div className="p-3 bg-[#C25E3A]/10 rounded-lg text-xs font-mono text-[#C25E3A] flex items-center gap-2">
-                    <span className="animate-spin">⏳</span>
-                    <span>{uploadProgress}</span>
+                  <div className="p-3.5 bg-amber-500/10 dark:bg-amber-500/15 border border-amber-500/30 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 font-mono text-amber-800 dark:text-amber-300 font-medium min-w-0">
+                        <span className="animate-spin text-sm shrink-0">⏳</span>
+                        <span className="truncate">{uploadProgress}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCancelProcessing}
+                        className="px-2.5 py-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 bg-rose-100/60 dark:bg-rose-950/50 hover:bg-rose-200/60 rounded-lg transition-colors cursor-pointer shrink-0 ml-2"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+
+                    {/* Network Reconnection Indicator Badge */}
+                    {isRetrying && (
+                      <div className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-200 bg-amber-200/60 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700/60 px-2.5 py-1 rounded-lg animate-pulse">
+                        <WifiOff className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>
+                          Network fluctuation detected — auto-reconnecting (Attempt {retryInfo?.attempt || 1}/{retryInfo?.max || 3})
+                        </span>
+                      </div>
+                    )}
+
+                    {uploadPercent > 0 && (
+                      <div className="space-y-1">
+                        <div className="w-full bg-stone-200 dark:bg-stone-700 h-2 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-300 rounded-full ${
+                              isRetrying
+                                ? 'bg-amber-500 animate-pulse'
+                                : 'bg-gradient-to-r from-amber-600 to-[#FF5733]'
+                            }`}
+                            style={{ width: `${Math.min(Math.max(uploadPercent, 5), 100)}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] font-mono text-stone-500">
+                          <span>{isRetrying ? 'Retrying failed segment...' : 'Transfer in progress'}</span>
+                          <span>{uploadPercent}%</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

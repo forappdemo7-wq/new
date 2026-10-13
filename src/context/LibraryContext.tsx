@@ -206,15 +206,55 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             }
           });
           if (remoteWorks.length > 0) {
-            setWorks(prev => {
-              const combined = [...remoteWorks];
-              prev.forEach(w => {
-                if (!combined.some(rw => rw.id === w.id)) {
-                  combined.push(w);
+            setWorks((prev) => {
+              const remoteMap = new Map<string, Work>();
+              remoteWorks.forEach((rw) => remoteMap.set(rw.id, rw));
+
+              let hadEngagementChange = false;
+
+              const next = prev.map((w) => {
+                const rw = remoteMap.get(w.id);
+                if (rw) {
+                  const newLikes = typeof rw.likesCount === 'number' ? Math.max(0, rw.likesCount) : w.likesCount;
+                  const newComments = typeof rw.commentsCount === 'number' ? Math.max(0, rw.commentsCount) : w.commentsCount;
+                  if (newLikes !== w.likesCount || newComments !== w.commentsCount) {
+                    hadEngagementChange = true;
+                  }
+                  return {
+                    ...w,
+                    ...rw,
+                    // Keep full chapter contents if local was hydrated
+                    chapters: (w.chapters && w.chapters.length > 0)
+                      ? w.chapters.map((ch, idx) => ({
+                          ...ch,
+                          ...(rw.chapters?.[idx] || {}),
+                          content: ch.content || rw.chapters?.[idx]?.content || '',
+                        }))
+                      : rw.chapters || w.chapters,
+                    likesCount: newLikes,
+                    commentsCount: newComments,
+                  };
+                }
+                return w;
+              });
+
+              // Also append any new works created on another device
+              remoteWorks.forEach((rw) => {
+                if (!next.some((w) => w.id === rw.id)) {
+                  next.unshift(rw);
                 }
               });
-              saveStoredWorks(combined);
-              return combined;
+
+              saveStoredWorks(next);
+
+              if (hadEngagementChange) {
+                try {
+                  window.dispatchEvent(new CustomEvent('getnow:likes-updated'));
+                  window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
+                } catch {}
+              }
+
+              return next;
             });
           }
         }
@@ -224,8 +264,22 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     );
 
+    // Mobile device tab-switching / sleep recovery listener
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        try {
+          window.dispatchEvent(new CustomEvent('getnow:likes-updated'));
+          window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
+        } catch {}
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleVisibility);
+
     return () => {
       unsubWorks();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleVisibility);
     };
   }, []);
 

@@ -1,94 +1,148 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Default allow read/write for preview/testing to prevent any permission issues
-    match /{document=**} {
-      allow read, write: if true;
+
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    // Public test connection endpoint
-    match /test/{docId} {
-      allow read, write: if true;
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
     }
 
     // Catalog works
     match /works/{workId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if isAuthenticated() && (
+        (
+          (request.resource.data.publisherId == request.auth.uid || isAdmin()) &&
+          (request.resource.data.verificationStatus in ['verified', 'needs_review', 'pending'])
+        ) ||
+        request.resource.data.keys().hasOnly(['likesCount', 'commentsCount', 'updatedAt', 'title', 'slug', 'type'])
+      );
+      
+      allow update: if isAuthenticated() && (
+        resource.data.publisherId == request.auth.uid ||
+        isAdmin() ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'updatedAt'])
+      );
+
+      allow delete: if isAuthenticated() && (
+        resource.data.publisherId == request.auth.uid || isAdmin()
+      );
 
       match /chapters/{chapterId} {
-        allow read, write: if true;
+        allow read: if true;
+        allow write: if isAuthenticated() && (
+          get(/databases/$(database)/documents/works/$(workId)).data.publisherId == request.auth.uid || isAdmin()
+        );
       }
 
-      match /likes/{userId} {
-        allow read, write: if true;
+      match /likes/{uid} {
+        allow read: if true;
+        allow create: if isAuthenticated() && request.auth.uid == uid && request.resource.data.userId == uid;
+        allow update: if false;
+        allow delete: if isAuthenticated() && request.auth.uid == uid;
       }
 
       match /comments/{commentId} {
-        allow read, write: if true;
+        allow read: if true;
+        allow create: if isAuthenticated() && 
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.content is string &&
+          request.resource.data.content.size() <= 2000;
+        allow update: if false;
+        allow delete: if isAuthenticated() && (
+          resource.data.userId == request.auth.uid || isAdmin()
+        );
       }
     }
 
     // User profiles & subcollections
-    match /users/{userId} {
-      allow read, write: if true;
+    match /users/{uid} {
+      allow read: if true;
+      allow write: if isOwner(uid) || isAdmin();
 
-      match /notifications/{notificationId} {
-        allow read, write: if true;
+      match /notifications/{nid} {
+        allow read, update, delete: if isOwner(uid) || isAdmin();
+        allow create: if isAuthenticated();
       }
 
       match /followers/{followerId} {
-        allow read, write: if true;
+        allow read: if true;
+        allow write: if isAuthenticated();
       }
 
       match /following/{targetUserId} {
-        allow read, write: if true;
+        allow read: if true;
+        allow write: if isAuthenticated() && request.auth.uid == uid;
       }
 
       match /bookmarks/{bookmarkId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(uid) || isAdmin();
       }
 
       match /reading_progress/{workId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(uid) || isAdmin();
       }
 
       match /favorites/{workId} {
-        allow read, write: if true;
+        allow read, write: if isOwner(uid) || isAdmin();
       }
+    }
+
+    // Admins collection for isAdmin helper
+    match /admins/{adminId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
     // Top-level collections
     match /bookmarks/{bookmarkId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     match /reading_progress/{workId} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
 
     match /banned_users/{userId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     match /reports/{reportId} {
-      allow read, write: if true;
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if isAdmin();
     }
 
     match /audits/{auditId} {
-      allow read, write: if true;
+      allow read: if isAdmin();
+      allow write: if isAdmin();
     }
 
     match /system_config/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     match /usernames/{usernameLower} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated();
     }
 
     match /accounts/{email} {
-      allow read, write: if true;
+      allow read, write: if isAuthenticated();
     }
   }
 }

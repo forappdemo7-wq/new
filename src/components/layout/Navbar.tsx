@@ -3,7 +3,6 @@ import { useRouter } from '../../context/RouterContext';
 import { useLibrary } from '../../context/LibraryContext';
 import { useAuth } from '../../context/AuthContext';
 import { Bookmark, Sun, Moon, Menu, X, Search, User, Users, Plus, Shield, ChevronDown, LogOut } from 'lucide-react';
-import { PwaInstallPrompt } from '../pwa/PwaInstallPrompt';
 import { PublishWorkModal } from '../modals/PublishWorkModal';
 import { GlobalSearchModal } from '../common/GlobalSearchModal';
 import { BrandLogo } from '../common/BrandLogo';
@@ -170,10 +169,6 @@ export const Navbar: React.FC = () => {
               {/* Notification Center Bell Dropdown */}
               <NotificationDropdown />
 
-              {/* PWA Install Button */}
-              <div className="hidden sm:block">
-                <PwaInstallPrompt />
-              </div>
 
               {/* Publish Work Button */}
               <button

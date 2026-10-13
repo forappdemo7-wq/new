@@ -1,4 +1,3 @@
-// Explicitly disable HMR in AI Studio sandbox environment to prevent WebSocket reconnect errors
 process.env.DISABLE_HMR = 'true';
 
 import express from 'express';
@@ -7,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import helmet from 'helmet';
 import { geminiApiRouter } from './server/routes/geminiApi';
 import { coverApiRouter } from './server/routes/coverApi';
 import { mediaApiRouter } from './server/routes/mediaApi';
@@ -22,7 +22,15 @@ async function startServer() {
   const server = http.createServer(app);
   const PORT = Number(process.env.PORT) || 3000;
 
-  // CORS support for Hybrid deployment (Vercel Frontend + Render Backend)
+  // Security headers with helmet (configured to allow loading images and scripts properly in iframe preview)
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    })
+  );
+
+  // CORS support
   app.use(cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
@@ -33,7 +41,6 @@ async function startServer() {
           return callback(null, true);
         }
       }
-      // By default in hybrid mode, allow origin
       return callback(null, true);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -43,7 +50,7 @@ async function startServer() {
 
   app.use(express.json({ limit: '15mb' }));
 
-  // Health check endpoint for Render / monitoring
+  // Health check endpoint
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
@@ -54,7 +61,7 @@ async function startServer() {
     });
   });
 
-  // 1. Project Gutenberg text proxy endpoint
+  // Project Gutenberg text proxy endpoint
   app.get('/api/gutenberg/:id', async (req, res) => {
     const id = req.params.id;
     const urlsToTry = [
@@ -76,40 +83,38 @@ async function startServer() {
             return res.send(text);
           }
         }
-      } catch (e) {
-        // continue to next URL
-      }
+      } catch {}
     }
-    return res.status(502).send('Failed to fetch from Project Gutenberg mirrors');
+    return res.status(502).json({ error: 'Failed to fetch from Project Gutenberg mirrors' });
   });
 
-  // 2. Generic CORS text proxy
+  // Generic CORS text proxy
   app.get('/api/proxy-text', async (req, res) => {
     const targetUrl = req.query.url as string;
     if (!targetUrl) {
-      return res.status(400).send('Missing url param');
+      return res.status(400).json({ error: 'Missing url param' });
     }
     try {
       const fetchRes = await fetch(targetUrl, {
         headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GutenbergReader/1.0)' }
       });
       if (!fetchRes.ok) {
-        return res.status(fetchRes.status).send(`Target returned ${fetchRes.statusText}`);
+        return res.status(fetchRes.status).json({ error: `Target returned ${fetchRes.statusText}` });
       }
       const text = await fetchRes.text();
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       return res.send(text);
     } catch (err: any) {
-      return res.status(502).send(err?.message || 'Proxy error');
+      return res.status(502).json({ error: err?.message || 'Proxy error' });
     }
   });
 
-  // 3. API routers
+  // API routers
   app.use('/api/covers', coverApiRouter);
   app.use('/api/gemini', geminiApiRouter);
   app.use('/api/media', mediaApiRouter);
 
-  // 4. Vite middleware (Dev) or Static files (Prod)
+  // Vite middleware (Dev) or Static files (Prod)
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

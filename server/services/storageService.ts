@@ -1,11 +1,27 @@
 import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { initializeApp as initAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
+import { getStorage as getAdminStorage } from 'firebase-admin/storage';
+import { S3Client } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 
-// Load Firebase Config if available
+// Types
+export type UploadSource = Buffer | string | Readable | NodeJS.ReadableStream;
+
+export interface UploadResult {
+  url: string;
+  provider: 'firebase' | 'backblaze' | 'local';
+  storagePath: string;
+}
+
+// 1. Firebase Client Storage (Lazy or Config-based)
 let firebaseStorage: ReturnType<typeof getStorage> | null = null;
+let firebaseBucketName: string | null = null;
+
 try {
   const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
   if (fs.existsSync(configPath)) {
@@ -13,6 +29,7 @@ try {
     const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
     if (firebaseConfig.storageBucket) {
       firebaseStorage = getStorage(app);
+      firebaseBucketName = firebaseConfig.storageBucket;
       console.log(`[Storage] Firebase Storage initialized with bucket: ${firebaseConfig.storageBucket}`);
     }
   }
@@ -20,7 +37,25 @@ try {
   console.warn('[Storage] Failed to initialize Firebase Storage:', err?.message);
 }
 
-// Backblaze B2 S3 Client Initialization (lazy-loaded)
+// 2. Firebase Admin Storage for direct server-side streaming
+let adminStorageBucket: any = null;
+try {
+  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (firebaseConfig.storageBucket && firebaseConfig.projectId) {
+      const adminApp = getAdminApps().length > 0
+        ? getAdminApps()[0]
+        : initAdminApp({ projectId: firebaseConfig.projectId, storageBucket: firebaseConfig.storageBucket });
+      adminStorageBucket = getAdminStorage(adminApp).bucket(firebaseConfig.storageBucket);
+      console.log(`[Storage] Firebase Admin Storage bucket ready: ${firebaseConfig.storageBucket}`);
+    }
+  }
+} catch (err: any) {
+  console.warn('[Storage] Firebase Admin Storage bucket initialization note:', err?.message);
+}
+
+// 3. Backblaze B2 S3 Client Initialization (lazy-loaded)
 let b2Client: S3Client | null = null;
 function getB2Client(): { client: S3Client; bucket: string; endpoint: string; region: string } | null {
   const keyId = process.env.B2_KEY_ID || process.env.B2_APPLICATION_KEY_ID;
@@ -51,53 +86,123 @@ function getB2Client(): { client: S3Client; bucket: string; endpoint: string; re
 }
 
 /**
- * Result of a file upload operation
+ * Creates a readable stream from a source (file path, buffer, or existing stream)
  */
-export interface UploadResult {
-  url: string;
-  provider: 'firebase' | 'backblaze' | 'local';
-  storagePath: string;
+function createReadableStream(source: UploadSource): Readable {
+  if (typeof source === 'string') {
+    return fs.createReadStream(source);
+  }
+  if (Buffer.isBuffer(source)) {
+    return Readable.from(source);
+  }
+  if (source instanceof Readable) {
+    return source;
+  }
+  return Readable.from(source as any);
 }
 
 /**
- * Uploads a buffer to Firebase Storage (Primary)
+ * Reads the source into a Uint8Array if a buffer is strictly needed by legacy SDKs
  */
-async function uploadToFirebase(buffer: Buffer, storagePath: string, contentType: string): Promise<string> {
+async function toUint8Array(source: UploadSource): Promise<Uint8Array> {
+  if (Buffer.isBuffer(source)) {
+    return new Uint8Array(source);
+  }
+  if (typeof source === 'string') {
+    const fileBuf = await fs.promises.readFile(source);
+    return new Uint8Array(fileBuf);
+  }
+  // If it's a stream, collect chunks into buffer
+  const chunks: Buffer[] = [];
+  for await (const chunk of source as any) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
+/**
+ * Uploads to Firebase Storage (Primary) using server streaming or client SDK
+ */
+async function uploadToFirebase(
+  source: UploadSource,
+  storagePath: string,
+  contentType: string
+): Promise<string> {
+  // First attempt: Firebase Admin stream write if available
+  if (adminStorageBucket) {
+    try {
+      const file = adminStorageBucket.file(storagePath);
+      const writeStream = file.createWriteStream({
+        metadata: {
+          contentType,
+          cacheControl: 'public, max-age=31536000, immutable',
+        },
+        resumable: false,
+      });
+
+      const readStream = createReadableStream(source);
+      await pipeline(readStream, writeStream);
+
+      // Make public or get download URL
+      try {
+        await file.makePublic();
+        return `https://storage.googleapis.com/${adminStorageBucket.name}/${storagePath}`;
+      } catch {
+        // Return public GCS / Firebase path format
+        return `https://firebasestorage.googleapis.com/v0/b/${adminStorageBucket.name}/o/${encodeURIComponent(storagePath)}?alt=media`;
+      }
+    } catch (adminErr: any) {
+      console.warn('[Storage] Admin streaming upload failed, falling back to client SDK:', adminErr?.message);
+    }
+  }
+
+  // Second attempt: Firebase Client SDK
   if (!firebaseStorage) {
     throw new Error('Firebase Storage is not initialized');
   }
 
   const fileRef = ref(firebaseStorage, storagePath);
-  const uint8Array = new Uint8Array(buffer);
-  const snapshot = await uploadBytes(fileRef, uint8Array, {
+  const data = await toUint8Array(source);
+  const snapshot = await uploadBytes(fileRef, data, {
     contentType,
     cacheControl: 'public, max-age=31536000, immutable',
   });
 
-  const downloadUrl = await getDownloadURL(snapshot.ref);
-  return downloadUrl;
+  return await getDownloadURL(snapshot.ref);
 }
 
 /**
- * Uploads a buffer to Backblaze B2 (Fallback)
+ * Uploads to Backblaze B2 (Fallback) using streaming multipart uploads via @aws-sdk/lib-storage
  */
-async function uploadToBackblaze(buffer: Buffer, storagePath: string, contentType: string): Promise<string> {
+async function uploadToBackblaze(
+  source: UploadSource,
+  storagePath: string,
+  contentType: string
+): Promise<string> {
   const b2Config = getB2Client();
   if (!b2Config) {
     throw new Error('Backblaze B2 credentials (B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME) are not configured');
   }
 
-  const { client, bucket, endpoint, region } = b2Config;
+  const { client, bucket, endpoint } = b2Config;
+  const bodyStream = createReadableStream(source);
 
-  const command = new PutObjectCommand({
-    Bucket: bucket,
-    Key: storagePath,
-    Body: buffer,
-    ContentType: contentType,
-    CacheControl: 'public, max-age=31536000, immutable',
+  // Use streaming multipart upload (avoids keeping full file in heap memory)
+  const parallelUpload = new Upload({
+    client,
+    params: {
+      Bucket: bucket,
+      Key: storagePath,
+      Body: bodyStream,
+      ContentType: contentType,
+      CacheControl: 'public, max-age=31536000, immutable',
+    },
+    partSize: 5 * 1024 * 1024, // 5MB parts
+    queueSize: 4,              // 4 concurrent part uploads
+    leavePartsOnError: false,
   });
 
-  await client.send(command);
+  await parallelUpload.done();
 
   // Determine public download URL
   const customDomain = process.env.B2_CUSTOM_DOMAIN;
@@ -106,43 +211,52 @@ async function uploadToBackblaze(buffer: Buffer, storagePath: string, contentTyp
     return `https://${cleanDomain}/${storagePath}`;
   }
 
-  // Backblaze S3 public URL format
-  // e.g. https://<bucket>.s3.<region>.backblazeb2.com/<storagePath>
   const host = endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '');
   return `https://${bucket}.${host}/${storagePath}`;
 }
 
 /**
- * Uploads a buffer to local disk (Offline / Development Fallback)
+ * Streams to local disk (Offline / Development Fallback)
  */
-function uploadToLocal(buffer: Buffer, storagePath: string): string {
+async function uploadToLocal(source: UploadSource, storagePath: string): Promise<string> {
   const uploadsRoot = path.resolve(process.cwd(), 'data', 'uploads');
   const fullPath = path.resolve(uploadsRoot, storagePath);
   const dir = path.dirname(fullPath);
 
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(fullPath, buffer);
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  if (typeof source === 'string') {
+    // Zero-allocation copy if source is already on disk
+    await fs.promises.copyFile(source, fullPath);
+  } else if (Buffer.isBuffer(source)) {
+    await fs.promises.writeFile(fullPath, source);
+  } else {
+    // Stream directly to destination file
+    const destStream = fs.createWriteStream(fullPath);
+    await pipeline(source, destStream);
+  }
 
   return `/api/media/files/${storagePath}`;
 }
 
 /**
- * Multi-Tiered Unified Storage Upload:
- * 1. Primary: Firebase Storage
- * 2. Fallback: Backblaze B2 Cloud Storage (if Firebase quota exceeded, rate limited, or fails)
- * 3. Offline Fallback: Local Server Disk Storage
+ * Multi-Tiered Unified Storage Upload with Stream Support:
+ * 1. Primary: Firebase Storage (Streaming via Admin SDK or Client SDK)
+ * 2. Fallback: Backblaze B2 Cloud Storage (Streaming multipart upload via @aws-sdk/lib-storage)
+ * 3. Offline Fallback: Local Server Disk Storage (Streaming pipeline copy)
+ *
+ * Accepts a file path on disk (preferred for zero-heap usage), a Readable stream, or a Buffer.
  */
 export async function uploadMediaFile(
-  buffer: Buffer,
+  source: UploadSource,
   storagePath: string,
   contentType: string = 'image/webp'
 ): Promise<UploadResult> {
-  // Normalize path (no leading slash)
   const normalizedPath = storagePath.replace(/^\/+/, '');
 
   // 1. Try Firebase Storage (Primary)
   try {
-    const url = await uploadToFirebase(buffer, normalizedPath, contentType);
+    const url = await uploadToFirebase(source, normalizedPath, contentType);
     return { url, provider: 'firebase', storagePath: normalizedPath };
   } catch (firebaseErr: any) {
     console.warn(`[Storage] Firebase upload failed for "${normalizedPath}": ${firebaseErr?.message || firebaseErr}`);
@@ -151,7 +265,7 @@ export async function uploadMediaFile(
 
   // 2. Try Backblaze B2 (Fallback)
   try {
-    const url = await uploadToBackblaze(buffer, normalizedPath, contentType);
+    const url = await uploadToBackblaze(source, normalizedPath, contentType);
     console.log(`[Storage] Successfully uploaded "${normalizedPath}" to Backblaze B2!`);
     return { url, provider: 'backblaze', storagePath: normalizedPath };
   } catch (b2Err: any) {
@@ -160,7 +274,7 @@ export async function uploadMediaFile(
   }
 
   // 3. Fallback to Local Disk
-  const localUrl = uploadToLocal(buffer, normalizedPath);
+  const localUrl = await uploadToLocal(source, normalizedPath);
   return { url: localUrl, provider: 'local', storagePath: normalizedPath };
 }
 
@@ -172,7 +286,8 @@ export function getStorageOverview() {
   return {
     primary: {
       provider: 'firebase',
-      enabled: Boolean(firebaseStorage),
+      enabled: Boolean(firebaseStorage || adminStorageBucket),
+      bucket: firebaseBucketName,
     },
     fallback: {
       provider: 'backblaze',

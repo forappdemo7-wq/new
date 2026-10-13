@@ -150,11 +150,48 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
 
   const handleToggleLike = async () => {
     if (!work) return;
+    if (!activeUserId) {
+      openAuthModal('signin');
+      return;
+    }
+    if (isLiking) return;
     setIsLiking(true);
     setLikeToast(null);
 
+    // Save previous state for rollback
+    const prevLiked = isLiked;
+    const prevLikes = likes;
+    const optimisticLiked = !prevLiked;
+
+    // Instant 0ms optimistic UI update
+    setIsLiked(optimisticLiked);
+    if (optimisticLiked) {
+      setLikes([
+        ...prevLikes.filter((l) => l.userId !== activeUserId),
+        {
+          id: `like-${work.id}-${activeUserId}`,
+          workId: work.id,
+          userId: activeUserId,
+          userName: activeDisplayName,
+          userAvatar: activeAvatar,
+          likedAt: new Date().toISOString(),
+        },
+      ]);
+      const uploaderId = work.uploaderId || work.publisherId;
+      if (uploaderId && uploaderId !== activeUserId) {
+        setLikeToast(`❤️ Liked! Uploader (${work.publisherName || 'community creator'}) received a notification in their panel.`);
+      } else {
+        setLikeToast('❤️ Liked! Added to your appreciated works.');
+      }
+      setTimeout(() => setLikeToast(null), 3500);
+    } else {
+      setLikes(prevLikes.filter((l) => l.userId !== activeUserId));
+      setLikeToast('Like removed');
+      setTimeout(() => setLikeToast(null), 2500);
+    }
+
     const userPayload = {
-      uid: activeUserId || `guest-${Date.now()}`,
+      uid: activeUserId,
       displayName: activeDisplayName,
       photoURL: activeAvatar,
     };
@@ -162,18 +199,13 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
     try {
       const res = await toggleWorkLike(work, userPayload);
       setIsLiked(res.liked);
-
-      if (res.liked) {
-        const uploaderId = work.uploaderId || work.publisherId;
-        if (uploaderId && uploaderId !== activeUserId) {
-          setLikeToast(`❤️ Liked! Uploader (${work.publisherName || 'community creator'}) received a notification in their panel.`);
-        } else {
-          setLikeToast('❤️ Liked! Your uploaded work notification has been sent to your panel.');
-        }
-        setTimeout(() => setLikeToast(null), 4500);
-      }
-    } catch (err) {
-      console.warn('Failed to toggle like:', err);
+    } catch (err: any) {
+      // Automatic rollback on failure
+      setIsLiked(prevLiked);
+      setLikes(prevLikes);
+      setLikeToast('Could not update like. Please try again.');
+      setTimeout(() => setLikeToast(null), 3500);
+      console.warn('Failed to toggle like:', err?.message || err);
     } finally {
       setIsLiking(false);
     }
@@ -317,7 +349,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                   />
                   <span>{isLiked ? 'Liked' : 'Like'}</span>
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300">
-                    {likes.length || work.likesCount || 0}
+                    {Math.max(likes.length, work.likesCount || 0)}
                   </span>
                 </button>
 
@@ -331,7 +363,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                   <MessageSquare className="w-4 h-4 text-[#C25E3A]" />
                   <span>Comments</span>
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300">
-                    {commentsCount}
+                    {Math.max(commentsCount, work.commentsCount || 0)}
                   </span>
                 </button>
               </div>
@@ -634,7 +666,8 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                     Readers Who Liked
                   </h3>
                   <p className="text-xs text-stone-500 dark:text-stone-400">
-                    {likes.length} {likes.length === 1 ? 'reader' : 'readers'} appreciated this work
+                    {likes.filter((l) => l.userId && !l.userId.startsWith('guest-')).length}{' '}
+                    {likes.filter((l) => l.userId && !l.userId.startsWith('guest-')).length === 1 ? 'reader' : 'readers'} appreciated this work
                   </p>
                 </div>
               </div>
@@ -659,9 +692,9 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                 />
               </div>
 
-              {likes.filter((l) => (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim())).length > 0 ? (
+              {likes.filter((l) => l.userId && !l.userId.startsWith('guest-') && (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim())).length > 0 ? (
                 likes
-                  .filter((l) => (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim()))
+                  .filter((l) => l.userId && !l.userId.startsWith('guest-') && (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim()))
                   .map((liker) => (
                   <div
                     key={liker.userId || liker.userName}
