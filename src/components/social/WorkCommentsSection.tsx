@@ -109,7 +109,7 @@ export const WorkCommentsSection: React.FC<WorkCommentsSectionProps> = ({ work }
   });
 
   // Current real user identity
-  const activeUserId = currentUser?.uid || userProfile?.uid || guestUid;
+  const activeUserId = userProfile?.uid || currentUser?.uid || guestUid;
   const activeDisplayName =
     userProfile?.displayName ||
     currentUser?.displayName ||

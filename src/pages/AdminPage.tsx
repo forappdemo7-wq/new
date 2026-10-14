@@ -34,6 +34,7 @@ import {
   Loader2
 } from 'lucide-react';
 import defaultMangaCover from '../assets/images/manga_hokusai_woodblock_1790760941217.jpg';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 export const AdminPage: React.FC = () => {
   const { navigate } = useRouter();
@@ -88,6 +89,8 @@ export const AdminPage: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'works' | 'creators_moderation' | 'ingestion_pipeline' | 'cover_manager' | 'new_work' | 'needs_review' | 'audit_logs' | 'reports' | 'import_export'>('works');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [deleteWorkTarget, setDeleteWorkTarget] = useState<Work | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState<boolean>(false);
 
   // New Work Form State
   const [formData, setFormData] = useState<{
@@ -173,7 +176,7 @@ export const AdminPage: React.FC = () => {
     // Enforce Rule 1 & Part 11:
     // A work cannot be published unless it allows hosting OR isHosted = false with externalReadUrl
     if (formData.licenseCode === 'LINK_OUT_ONLY' && !formData.externalReadUrl) {
-      alert('Link-out works MUST supply an External Read URL pointing to the official authorized portal.');
+      showNotification('Link-out works MUST supply an External Read URL pointing to the official authorized portal.');
       return;
     }
 
@@ -299,10 +302,10 @@ export const AdminPage: React.FC = () => {
         setJsonInput('');
         setActiveTab('works');
       } else {
-        alert('JSON must be an array of Work objects.');
+        showNotification('JSON must be an array of Work objects.');
       }
     } catch {
-      alert('Invalid JSON formatting.');
+      showNotification('Invalid JSON formatting.');
     }
   };
 
@@ -418,12 +421,7 @@ export const AdminPage: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              if (confirm('Restore the 21 verified seed titles (Books, Comics, Manga, and Link-Out Portals)?')) {
-                restoreSeedCatalog();
-                showNotification('Catalog restored to original 21 verified works.');
-              }
-            }}
+            onClick={() => setShowRestoreModal(true)}
             className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-stone-300 dark:border-stone-700 bg-white dark:bg-[#151820] text-stone-800 dark:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-800 flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
           >
             <RotateCcw className="w-3.5 h-3.5 text-stone-600 dark:text-stone-400" />
@@ -649,12 +647,7 @@ export const AdminPage: React.FC = () => {
                         <Edit3 className="w-3.5 h-3.5 inline" />
                       </button>
                       <button
-                        onClick={() => {
-                          if (confirm(`Delete "${w.title}"?`)) {
-                            removeWork(w.id);
-                            showNotification(`Deleted "${w.title}"`);
-                          }
-                        }}
+                        onClick={() => setDeleteWorkTarget(w)}
                         className="p-1 text-rose-600 hover:text-rose-800 cursor-pointer"
                         title="Delete work"
                       >
@@ -1061,6 +1054,39 @@ export const AdminPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* In-app Confirmation Modals replacing browser window.confirm (which blocks in iframes) */}
+      <ConfirmModal
+        isOpen={Boolean(deleteWorkTarget)}
+        title="Delete Work from Catalog?"
+        message={`Are you sure you want to permanently delete "${deleteWorkTarget?.title}"?\n\nThis action will immediately remove the work from the catalog, search results, and delete its database records.`}
+        confirmLabel="Delete Work"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={() => {
+          if (deleteWorkTarget) {
+            removeWork(deleteWorkTarget.id);
+            showNotification(`Deleted "${deleteWorkTarget.title}"`);
+            setDeleteWorkTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteWorkTarget(null)}
+      />
+
+      <ConfirmModal
+        isOpen={showRestoreModal}
+        title="Restore Seed Catalog?"
+        message="Are you sure you want to restore the 21 verified seed titles (Books, Comics, Manga, and Link-Out Portals)? Any previously removed default works will be reinstated."
+        confirmLabel="Restore Catalog"
+        cancelLabel="Cancel"
+        isDestructive={false}
+        onConfirm={() => {
+          restoreSeedCatalog();
+          showNotification('Catalog restored to original 21 verified works.');
+          setShowRestoreModal(false);
+        }}
+        onCancel={() => setShowRestoreModal(false)}
+      />
     </div>
   );
 };

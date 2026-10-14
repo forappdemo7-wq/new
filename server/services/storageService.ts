@@ -21,6 +21,7 @@ export interface UploadResult {
 // 1. Firebase Client Storage (Lazy or Config-based)
 let firebaseStorage: ReturnType<typeof getStorage> | null = null;
 let firebaseBucketName: string | null = null;
+let firebaseStorageAvailable = true;
 
 try {
   const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
@@ -30,11 +31,10 @@ try {
     if (firebaseConfig.storageBucket) {
       firebaseStorage = getStorage(app);
       firebaseBucketName = firebaseConfig.storageBucket;
-      console.log(`[Storage] Firebase Storage initialized with bucket: ${firebaseConfig.storageBucket}`);
     }
   }
-} catch (err: any) {
-  console.warn('[Storage] Failed to initialize Firebase Storage:', err?.message);
+} catch {
+  firebaseStorageAvailable = false;
 }
 
 // 2. Firebase Admin Storage for direct server-side streaming
@@ -48,21 +48,34 @@ try {
         ? getAdminApps()[0]
         : initAdminApp({ projectId: firebaseConfig.projectId, storageBucket: firebaseConfig.storageBucket });
       adminStorageBucket = getAdminStorage(adminApp).bucket(firebaseConfig.storageBucket);
-      console.log(`[Storage] Firebase Admin Storage bucket ready: ${firebaseConfig.storageBucket}`);
     }
   }
-} catch (err: any) {
-  console.warn('[Storage] Firebase Admin Storage bucket initialization note:', err?.message);
+} catch {
+  adminStorageBucket = null;
 }
 
 // 3. Backblaze B2 S3 Client Initialization (lazy-loaded)
 let b2Client: S3Client | null = null;
+let b2Available = true;
+
 function getB2Client(): { client: S3Client; bucket: string; endpoint: string; region: string } | null {
-  const keyId = process.env.B2_KEY_ID || process.env.B2_APPLICATION_KEY_ID;
-  const applicationKey = process.env.B2_APPLICATION_KEY;
-  const bucketName = process.env.B2_BUCKET_NAME;
+  if (!b2Available) return null;
+
+  const keyId = (process.env.B2_KEY_ID || process.env.B2_APPLICATION_KEY_ID || '').trim();
+  const applicationKey = (process.env.B2_APPLICATION_KEY || '').trim();
+  const bucketName = (process.env.B2_BUCKET_NAME || '').trim();
 
   if (!keyId || !applicationKey || !bucketName) {
+    return null;
+  }
+
+  // Validate S3 bucket name: no spaces, valid DNS chars, not placeholder/label text
+  const isValidBucket = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/i.test(bucketName) && !bucketName.toLowerCase().includes('application key');
+  // Backblaze S3 credentials require valid application key (not truncated/master key)
+  const isValidKey = keyId.length >= 16 && applicationKey.length >= 20;
+
+  if (!isValidBucket || !isValidKey) {
+    b2Available = false;
     return null;
   }
 
@@ -71,18 +84,33 @@ function getB2Client(): { client: S3Client; bucket: string; endpoint: string; re
   const endpoint = rawEndpoint.startsWith('http') ? rawEndpoint : `https://${rawEndpoint}`;
 
   if (!b2Client) {
-    b2Client = new S3Client({
-      endpoint,
-      region,
-      credentials: {
-        accessKeyId: keyId,
-        secretAccessKey: applicationKey,
-      },
-    });
-    console.log(`[Storage] Backblaze B2 S3 client initialized for bucket "${bucketName}" at ${endpoint}`);
+    try {
+      b2Client = new S3Client({
+        endpoint,
+        region,
+        credentials: {
+          accessKeyId: keyId,
+          secretAccessKey: applicationKey,
+        },
+      });
+    } catch {
+      b2Available = false;
+      return null;
+    }
   }
 
   return { client: b2Client, bucket: bucketName, endpoint, region };
+}
+
+function isBucketNotFoundError(err: any): boolean {
+  const msg = (err?.message || String(err)).toLowerCase();
+  return (
+    msg.includes('bucket does not exist') ||
+    msg.includes('storage/unknown') ||
+    msg.includes('not found') ||
+    msg.includes('not initialized') ||
+    msg.includes('no such bucket')
+  );
 }
 
 /**
@@ -128,6 +156,10 @@ async function uploadToFirebase(
   storagePath: string,
   contentType: string
 ): Promise<string> {
+  if (!firebaseStorageAvailable) {
+    throw new Error('Firebase Storage is not available');
+  }
+
   // First attempt: Firebase Admin stream write if available
   if (adminStorageBucket) {
     try {
@@ -152,23 +184,33 @@ async function uploadToFirebase(
         return `https://firebasestorage.googleapis.com/v0/b/${adminStorageBucket.name}/o/${encodeURIComponent(storagePath)}?alt=media`;
       }
     } catch (adminErr: any) {
-      console.warn('[Storage] Admin streaming upload failed, falling back to client SDK:', adminErr?.message);
+      if (isBucketNotFoundError(adminErr)) {
+        firebaseStorageAvailable = false;
+        throw adminErr;
+      }
     }
   }
 
   // Second attempt: Firebase Client SDK
-  if (!firebaseStorage) {
-    throw new Error('Firebase Storage is not initialized');
+  if (!firebaseStorage || !firebaseStorageAvailable) {
+    throw new Error('Firebase Storage is not available');
   }
 
-  const fileRef = ref(firebaseStorage, storagePath);
-  const data = await toUint8Array(source);
-  const snapshot = await uploadBytes(fileRef, data, {
-    contentType,
-    cacheControl: 'public, max-age=31536000, immutable',
-  });
+  try {
+    const fileRef = ref(firebaseStorage, storagePath);
+    const data = await toUint8Array(source);
+    const snapshot = await uploadBytes(fileRef, data, {
+      contentType,
+      cacheControl: 'public, max-age=31536000, immutable',
+    });
 
-  return await getDownloadURL(snapshot.ref);
+    return await getDownloadURL(snapshot.ref);
+  } catch (clientErr: any) {
+    if (isBucketNotFoundError(clientErr)) {
+      firebaseStorageAvailable = false;
+    }
+    throw clientErr;
+  }
 }
 
 /**
@@ -181,7 +223,7 @@ async function uploadToBackblaze(
 ): Promise<string> {
   const b2Config = getB2Client();
   if (!b2Config) {
-    throw new Error('Backblaze B2 credentials (B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME) are not configured');
+    throw new Error('Backblaze B2 is not configured');
   }
 
   const { client, bucket, endpoint } = b2Config;
@@ -254,26 +296,32 @@ export async function uploadMediaFile(
 ): Promise<UploadResult> {
   const normalizedPath = storagePath.replace(/^\/+/, '');
 
-  // 1. Try Firebase Storage (Primary)
-  try {
-    const url = await uploadToFirebase(source, normalizedPath, contentType);
-    return { url, provider: 'firebase', storagePath: normalizedPath };
-  } catch (firebaseErr: any) {
-    console.warn(`[Storage] Firebase upload failed for "${normalizedPath}": ${firebaseErr?.message || firebaseErr}`);
-    console.warn('[Storage] Triggering fallback to Backblaze B2...');
+  // 1. Try Firebase Storage (Primary) if bucket is available
+  if (firebaseStorageAvailable && (adminStorageBucket || firebaseStorage)) {
+    try {
+      const url = await uploadToFirebase(source, normalizedPath, contentType);
+      return { url, provider: 'firebase', storagePath: normalizedPath };
+    } catch (firebaseErr: any) {
+      if (isBucketNotFoundError(firebaseErr)) {
+        firebaseStorageAvailable = false;
+      }
+    }
   }
 
-  // 2. Try Backblaze B2 (Fallback)
-  try {
-    const url = await uploadToBackblaze(source, normalizedPath, contentType);
-    console.log(`[Storage] Successfully uploaded "${normalizedPath}" to Backblaze B2!`);
-    return { url, provider: 'backblaze', storagePath: normalizedPath };
-  } catch (b2Err: any) {
-    console.warn(`[Storage] Backblaze B2 upload failed for "${normalizedPath}": ${b2Err?.message || b2Err}`);
-    console.warn('[Storage] Triggering fallback to local server disk...');
+  // 2. Try Backblaze B2 (Fallback) if configured and active
+  if (b2Available && getB2Client()) {
+    try {
+      const url = await uploadToBackblaze(source, normalizedPath, contentType);
+      return { url, provider: 'backblaze', storagePath: normalizedPath };
+    } catch (b2Err: any) {
+      const msg = (b2Err?.message || String(b2Err)).toLowerCase();
+      if (msg.includes('malformed') || msg.includes('invalidaccesskey') || msg.includes('not configured')) {
+        b2Available = false;
+      }
+    }
   }
 
-  // 3. Fallback to Local Disk
+  // 3. Fallback to Local Disk (Immediate, robust, and zero-dependency)
   const localUrl = await uploadToLocal(source, normalizedPath);
   return { url: localUrl, provider: 'local', storagePath: normalizedPath };
 }

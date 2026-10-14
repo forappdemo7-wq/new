@@ -1,11 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { useRouter } from '../context/RouterContext';
 import { History as HistoryIcon, BookOpen, Trash2, ArrowLeft, Clock, Play } from 'lucide-react';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 export const HistoryPage: React.FC = () => {
   const { works, progress, clearReadingProgress } = useLibrary();
   const { navigate } = useRouter();
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   // Get works that have reading progress entries
   const progressEntries = Object.values(progress).sort((a, b) => {
@@ -48,11 +50,7 @@ export const HistoryPage: React.FC = () => {
           </div>
           {historyItems.length > 0 && (
             <button
-              onClick={() => {
-                if (window.confirm('Are you sure you want to clear your reading history?')) {
-                  clearReadingProgress();
-                }
-              }}
+              onClick={() => setShowClearConfirm(true)}
               className="px-4 py-2 bg-stone-200 dark:bg-stone-800 hover:bg-red-500 hover:text-white text-stone-700 dark:text-stone-300 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer self-start md:self-auto"
             >
               <Trash2 className="w-4 h-4" />
@@ -148,6 +146,20 @@ export const HistoryPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={showClearConfirm}
+        title="Clear Reading History?"
+        message="Are you sure you want to clear your entire reading history across all books, manga, and comics? Your reading position tracking will be reset."
+        confirmLabel="Clear History"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={() => {
+          clearReadingProgress();
+          setShowClearConfirm(false);
+        }}
+        onCancel={() => setShowClearConfirm(false)}
+      />
     </div>
   );
 };

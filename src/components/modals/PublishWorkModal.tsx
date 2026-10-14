@@ -11,8 +11,10 @@ import { mediaProcessingService } from '../../services/mediaProcessingService';
 import {
   uploadFileWithResilientChunks,
   uploadPagesResiliently,
+  getAuthToken,
   ResumableUploadError,
 } from '../../services/resilientUploadService';
+import { compressImageToDataUrl } from '../../utils/imageOptimizer';
 import {
   X,
   Upload,
@@ -57,7 +59,8 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
   const { currentUser, userProfile, openAuthModal } = useAuth();
   const { navigate } = useRouter();
 
-  const isAuthenticated = Boolean(currentUser && !currentUser.isAnonymous);
+  const activeReader = currentUser || userProfile;
+  const isAuthenticated = Boolean(activeReader && !(activeReader as any).isAnonymous);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [title, setTitle] = useState('');
@@ -150,7 +153,7 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
   // Helper to get authenticated bearer token headers
   const getAuthHeaders = async (): Promise<Record<string, string>> => {
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAuthToken(currentUser || userProfile);
       if (token) {
         return { Authorization: `Bearer ${token}` };
       }
@@ -163,7 +166,8 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!auth.currentUser || auth.currentUser.isAnonymous) {
+    const active = currentUser || userProfile;
+    if (!active || (active as any).isAnonymous) {
       showToast('Please sign into your reader account before uploading custom cover art.', 'warning');
       openAuthModal('signin');
       return;
@@ -226,14 +230,22 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
       setRetryInfo(null);
     }
 
-    // Fallback client reader
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      if (evt.target?.result) {
-        setCustomCoverUrl(evt.target.result as string);
+    // Fallback client reader: compress to lightweight WebP data URL (~30-50 KB)
+    try {
+      const optimized = await compressImageToDataUrl(file, 480, 720, 0.8);
+      if (optimized) {
+        setCustomCoverUrl(optimized);
       }
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      // Safe fallback only if canvas processing is unavailable
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        if (evt.target?.result) {
+          setCustomCoverUrl(evt.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   // Resume interrupted chunked upload
@@ -312,7 +324,8 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!auth.currentUser || auth.currentUser.isAnonymous) {
+    const active = currentUser || userProfile;
+    if (!active || (active as any).isAnonymous) {
       showToast('Please sign into your reader account before uploading manga or comic archives.', 'warning');
       openAuthModal('signin');
       return;
@@ -566,7 +579,8 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    if (!auth.currentUser || auth.currentUser.isAnonymous) {
+    const active = currentUser || userProfile;
+    if (!active || (active as any).isAnonymous) {
       showToast('Please sign into your reader account before uploading manga pages.', 'warning');
       openAuthModal('signin');
       return;
@@ -614,7 +628,7 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
     }
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!isAuthenticated) {
       showToast('Account required: Please log into or create a reader account before publishing works.', 'warning');
       onClose();
@@ -641,29 +655,42 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-');
 
-    const formattedChapters: Chapter[] = chapters.map((c, idx) => ({
-      id: `chap-${slug}-${idx + 1}`,
-      workId: `work-${slug}`,
-      chapterNumber: idx + 1,
-      number: idx + 1,
-      title: c.title || `Chapter ${idx + 1}`,
-      slug: `chapter-${idx + 1}`,
-      content: c.text,
-      pages: c.pages?.map((p, pageIdx) => ({
-        id: `page-${pageIdx + 1}`,
-        pageNumber: pageIdx + 1,
-        imageUrl: p,
-        altText: `Page ${pageIdx + 1}`,
-      })),
-    }));
+    const formattedChapters: Chapter[] = chapters.map((c, idx) => {
+      const chapObj: Chapter = {
+        id: `chap-${slug}-${idx + 1}`,
+        workId: `work-${slug}`,
+        chapterNumber: idx + 1,
+        number: idx + 1,
+        title: c.title || `Chapter ${idx + 1}`,
+        slug: `chapter-${idx + 1}`,
+        content: c.text || '',
+      };
+      if (Array.isArray(c.pages) && c.pages.length > 0) {
+        chapObj.pages = c.pages.map((p, pageIdx) => ({
+          id: `page-${pageIdx + 1}`,
+          pageNumber: pageIdx + 1,
+          imageUrl: p || '',
+          altText: `Page ${pageIdx + 1}`,
+        }));
+        chapObj.pagesCount = chapObj.pages.length;
+      }
+      return chapObj;
+    });
 
-    const finalCover = customCoverUrl || generateGhostCoverSvg(
+    let finalCover = customCoverUrl || generateGhostCoverSvg(
       title,
       authorName || 'Community Creator',
       type,
       new Date().getFullYear(),
       GHOST_COVER_PALETTES[1]
     );
+
+    // If finalCover is an oversized raw data URL, compress to ensure it never exceeds Firestore or localStorage limits
+    if (finalCover && finalCover.startsWith('data:') && finalCover.length > 80000) {
+      try {
+        finalCover = await compressImageToDataUrl(finalCover, 480, 720, 0.75);
+      } catch {}
+    }
 
     const publisherDisplayName = userProfile?.displayName || currentUser?.displayName || authorName.trim() || 'Community Creator';
     const publisherEmail = currentUser?.email || '';
@@ -1321,7 +1348,7 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
               type="button"
               onClick={() => {
                 if (step === 1 && !title.trim()) {
-                  alert('Please enter a title for your work.');
+                  showToast('Please enter a title for your work before proceeding to Step 2.', 'warning');
                   return;
                 }
                 setStep((step + 1) as any);

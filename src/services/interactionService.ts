@@ -30,11 +30,18 @@ export function sanitizeLikes(likes: any[]): WorkLike[] {
   for (const item of likes) {
     if (!item || typeof item !== 'object') continue;
     const userId = item.userId;
-    // Reject guest IDs and empty IDs
-    if (!userId || typeof userId !== 'string' || userId.startsWith('guest-') || userId === 'guest-session') {
+    if (!userId || typeof userId !== 'string') {
       continue;
     }
-    // Deduplicate: at most ONE like per registered account
+    // Strictly filter out fake guest / dummy reader likes
+    if (
+      userId.startsWith('guest-') ||
+      userId.startsWith('reader-') ||
+      (item.userName === 'Reader' && userId.includes('-') && !userId.startsWith('usr-') && !userId.startsWith('admin-'))
+    ) {
+      continue;
+    }
+    // Deduplicate: at most ONE like per unique registered account
     if (seenUsers.has(userId)) continue;
     seenUsers.add(userId);
     sanitized.push({
@@ -116,13 +123,13 @@ export function saveLocalLikes(workId: string, likes: WorkLike[]): void {
 export function getWorkLikesCount(work: Work): number {
   if (!work) return 0;
   try {
-    const local = getLocalLikes(work.id);
     const raw = localStorage.getItem(`getnow_work_likes_${work.id}`);
     if (raw !== null) {
-      return Math.max(local.length, work.likesCount || 0);
+      const local = getLocalLikes(work.id);
+      return local.length;
     }
   } catch {}
-  return work.likesCount || 0;
+  return typeof work.likesCount === 'number' ? Math.max(0, work.likesCount) : 0;
 }
 
 /**
@@ -221,11 +228,11 @@ const LIKE_COOLDOWN_MS = 400;
 
 export async function toggleWorkLike(
   work: Work,
-  user: { uid?: string | null; displayName?: string; photoURL?: string }
+  user?: { uid?: string | null; displayName?: string; photoURL?: string }
 ): Promise<{ liked: boolean; count: number }> {
   const userId = user?.uid;
-  if (!userId || userId.startsWith('guest-') || userId === 'guest-session') {
-    throw new Error('Authentication required: You must have an account to like works.');
+  if (!userId || userId.startsWith('guest-') || userId.startsWith('reader-')) {
+    throw new Error('Please sign in to like works.');
   }
 
   const workId = work.id;
@@ -245,8 +252,8 @@ export async function toggleWorkLike(
   }
   likeThrottleTimestamps.set(lockKey, now);
 
-  const userName = user.displayName?.trim() || 'Reader';
-  const userAvatar = user.photoURL || undefined;
+  const userName = user?.displayName?.trim() || 'Reader';
+  const userAvatar = user?.photoURL || undefined;
 
   // Execute toggle with in-flight lock tracking
   const toggleOperation = (async () => {
@@ -269,34 +276,28 @@ export async function toggleWorkLike(
           userAvatar,
           likedAt: new Date().toISOString(),
         };
-        // Throw on failure so the caller can roll back optimistic UI
         await setDoc(likeDocRef, likeRecord);
       } else {
-        // Throw on failure so the caller can roll back optimistic UI
         await deleteDoc(likeDocRef);
       }
 
-      // Atomically sync live likesCount on parent work document in Firestore
-      // so all other devices listening to works collection update simultaneously in real-time
+      // Atomically sync live likesCount and metadata on parent work document in Firestore
       const workDocRef = doc(db, 'works', workId);
       try {
-        await updateDoc(workDocRef, {
-          likesCount: increment(willLike ? 1 : -1),
-          updatedAt: new Date().toISOString(),
-        });
-      } catch {
-        try {
-          await setDoc(
-            workDocRef,
-            {
-              likesCount: willLike ? 1 : 0,
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
-          );
-        } catch (e) {
-          console.warn('Could not update work doc likesCount:', e);
-        }
+        await setDoc(
+          workDocRef,
+          {
+            id: work.id,
+            title: work.title,
+            slug: work.slug,
+            type: work.type || 'book',
+            likesCount: increment(willLike ? 1 : -1),
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn('Could not update work doc likesCount:', e);
       }
     } else {
       // Local fallback mode when database is not configured
@@ -326,11 +327,24 @@ export async function toggleWorkLike(
     const sanitized = sanitizeLikes(nextLocalLikes);
     saveLocalLikes(workId, sanitized);
 
+    // Keep user's liked set in localStorage in sync for instant 0ms restoration
+    try {
+      const userKey = `getnow_user_liked_${userId}`;
+      const stored = localStorage.getItem(userKey);
+      const set = new Set<string>(stored ? JSON.parse(stored) : []);
+      if (willLike) {
+        set.add(workId);
+      } else {
+        set.delete(workId);
+      }
+      localStorage.setItem(userKey, JSON.stringify(Array.from(set)));
+    } catch {}
+
     // Cross-component broadcast event
     try {
       window.dispatchEvent(
         new CustomEvent('getnow:likes-updated', {
-          detail: { workId, likes: sanitized, liked: willLike, count: sanitized.length },
+          detail: { workId, likes: sanitized, liked: willLike, count: sanitized.length, userId },
         })
       );
     } catch {}
@@ -375,23 +389,49 @@ export async function toggleWorkLike(
 export function subscribeWorkLikes(
   workId: string,
   currentUserId: string | undefined,
-  callback: (likes: WorkLike[], isLiked: boolean) => void
+  callback: (likes: WorkLike[], isLiked: boolean) => void,
+  alternateUserId?: string | undefined
 ): () => void {
-  const isUserAuthenticated = Boolean(currentUserId && !currentUserId.startsWith('guest-'));
+  const isMatchUser = (uid?: string) => {
+    if (!uid) return false;
+    return (Boolean(currentUserId) && uid === currentUserId) || (Boolean(alternateUserId) && uid === alternateUserId);
+  };
+
+  const isUserAuthenticated = Boolean(currentUserId || alternateUserId);
+
+  // Check user liked storage first for instant red heart render
+  let initiallyLiked = false;
+  if (isUserAuthenticated) {
+    try {
+      const uIds = [currentUserId, alternateUserId].filter(Boolean) as string[];
+      for (const uId of uIds) {
+        const stored = localStorage.getItem(`getnow_user_liked_${uId}`);
+        if (stored) {
+          const list = JSON.parse(stored);
+          if (Array.isArray(list) && list.includes(workId)) {
+            initiallyLiked = true;
+            break;
+          }
+        }
+      }
+    } catch {}
+  }
 
   // Emit current cached likes immediately for 0ms initial render
   const initialLocal = getLocalLikes(workId);
-  callback(
-    initialLocal,
-    Boolean(isUserAuthenticated && initialLocal.some((l) => l.userId === currentUserId))
-  );
+  if (!initiallyLiked && isUserAuthenticated) {
+    initiallyLiked = initialLocal.some((l) => isMatchUser(l.userId));
+  }
+  callback(initialLocal, initiallyLiked);
 
   // Listen to cross-component custom event for instant updates
   const handleLikesEvent = (e: Event) => {
     const custom = e as CustomEvent;
     if (custom.detail?.workId === workId) {
-      const current = getLocalLikes(workId);
-      const isLiked = Boolean(isUserAuthenticated && current.some((l) => l.userId === currentUserId));
+      const current = custom.detail?.likes || getLocalLikes(workId);
+      const isLiked = typeof custom.detail?.liked === 'boolean'
+        ? custom.detail.liked
+        : Boolean(isUserAuthenticated && current.some((l: any) => isMatchUser(l.userId)));
       callback(current, isLiked);
     }
   };
@@ -410,26 +450,35 @@ export function subscribeWorkLikes(
       const remoteLikes: WorkLike[] = [];
       snapshot.forEach((d) => {
         const data = d.data() as WorkLike;
-        if (data && data.userId && !data.userId.startsWith('guest-')) {
+        if (data && data.userId) {
           remoteLikes.push(data);
         }
       });
 
-      // Firestore is the single source of truth: do not re-add remotely deleted likes from localStorage
+      // Firestore is the single source of truth: real registered likes only
       const sanitized = sanitizeLikes(remoteLikes);
       saveLocalLikes(workId, sanitized);
 
-      const isLiked = Boolean(isUserAuthenticated && sanitized.some((l) => l.userId === currentUserId));
+      const isLiked = Boolean(isUserAuthenticated && sanitized.some((l) => isMatchUser(l.userId)));
       callback(sanitized, isLiked);
 
-      // Broadcast real-time change to all components and shelves on this device
-      try {
-        window.dispatchEvent(
-          new CustomEvent('getnow:likes-updated', {
-            detail: { workId, likes: sanitized, liked: isLiked, count: sanitized.length },
-          })
-        );
-      } catch {}
+      // Keep user's liked set in sync
+      if (isUserAuthenticated) {
+        const uIds = [currentUserId, alternateUserId].filter(Boolean) as string[];
+        for (const uId of uIds) {
+          try {
+            const userKey = `getnow_user_liked_${uId}`;
+            const stored = localStorage.getItem(userKey);
+            const set = new Set<string>(stored ? JSON.parse(stored) : []);
+            if (isLiked) {
+              set.add(workId);
+            } else {
+              set.delete(workId);
+            }
+            localStorage.setItem(userKey, JSON.stringify(Array.from(set)));
+          } catch {}
+        }
+      }
     },
     (err) => {
       console.warn(`subscribeWorkLikes error for ${workId}:`, err);
@@ -714,10 +763,14 @@ export async function addWorkComment(
       console.warn('Firestore addWorkComment error:', err);
     }
 
-    // Atomically sync live commentsCount on parent work document in Firestore
+    // Atomically sync live commentsCount and metadata on parent work document in Firestore
     const workDocRef = doc(db, 'works', workId);
     try {
       await updateDoc(workDocRef, {
+        id: work.id,
+        title: work.title,
+        slug: work.slug,
+        type: work.type || 'book',
         commentsCount: increment(1),
         updatedAt: new Date().toISOString(),
       });
@@ -726,6 +779,10 @@ export async function addWorkComment(
         await setDoc(
           workDocRef,
           {
+            id: work.id,
+            title: work.title,
+            slug: work.slug,
+            type: work.type || 'book',
             commentsCount: 1,
             updatedAt: new Date().toISOString(),
           },

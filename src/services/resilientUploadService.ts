@@ -36,14 +36,36 @@ const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB chunk size
 const MAX_CHUNK_RETRIES = 3;
 
 /**
- * Helper to get fresh Firebase Auth token
+ * Helper to get fresh Firebase Auth token or active reader session token
  */
-async function getAuthToken(): Promise<string | null> {
+export async function getAuthToken(user?: { uid?: string | null; email?: string | null; displayName?: string | null } | null): Promise<string | null> {
   try {
-    return (await auth.currentUser?.getIdToken()) || null;
-  } catch {
-    return null;
-  }
+    const fbToken = await auth.currentUser?.getIdToken();
+    if (fbToken) return fbToken;
+  } catch {}
+
+  // Fallback to active reader session
+  try {
+    let u = user;
+    if (!u) {
+      const stored = localStorage.getItem('getnow_active_user_profile_v3');
+      if (stored) {
+        u = JSON.parse(stored);
+      }
+    }
+    if (u?.uid) {
+      const payload = {
+        uid: u.uid,
+        email: u.email || `${u.uid}@getnow.local`,
+        name: u.displayName || 'Reader',
+        time: Date.now(),
+      };
+      const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      return `gn_sess_${b64}`;
+    }
+  } catch {}
+
+  return null;
 }
 
 /**

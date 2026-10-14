@@ -65,7 +65,8 @@ export const UserUploadsPage: React.FC = () => {
   const activeDisplayName = userProfile?.displayName || currentUser?.displayName || 'Reader';
 
   const handlePublishClick = () => {
-    if (!currentUser || currentUser.isAnonymous) {
+    const activeReader = currentUser || userProfile;
+    if (!activeReader || (activeReader as any).isAnonymous) {
       openAuthModal('signin');
     } else {
       setIsPublishModalOpen(true);

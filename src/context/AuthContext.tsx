@@ -21,7 +21,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
-import { clearStoredProgress } from '../services/storage';
+import { clearStoredProgress, getStoredBannedUsers, markUserAsDeleted, getStoredWorks, saveStoredWorks } from '../services/storage';
 
 export const PRESET_AVATARS = [
   { id: 'scholar', label: 'Archival Scholar', url: 'https://api.dicebear.com/7.x/bottts/svg?seed=scholar&backgroundColor=b6e3f4' },
@@ -372,6 +372,50 @@ export async function adminChangeUserPassword(email: string, newPass: string): P
   }
 }
 
+export async function adminDeleteUser(emailOrId: string): Promise<void> {
+  const cleanKey = emailOrId.trim().toLowerCase();
+  if (!cleanKey) return;
+
+  markUserAsDeleted(cleanKey);
+  if (emailOrId) markUserAsDeleted(emailOrId);
+
+  try {
+    const works = getStoredWorks();
+    const remaining = works.filter(w => {
+      const pubEmail = (w.publisherEmail || '').trim().toLowerCase();
+      const pubId = w.publisherId || '';
+      return pubEmail !== cleanKey && pubId !== emailOrId && pubId !== cleanKey;
+    });
+    saveStoredWorks(remaining);
+  } catch {}
+
+  try {
+    for (const key of ACCOUNT_STORAGE_KEYS) {
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const accounts = JSON.parse(stored);
+        if (Array.isArray(accounts)) {
+          const filtered = accounts.filter((a: any) => {
+            const accEmail = (a?.email || '').trim().toLowerCase();
+            const accUid = a?.profile?.uid || a?.uid;
+            return accEmail !== cleanKey && accUid !== emailOrId && accEmail !== emailOrId.trim().toLowerCase();
+          });
+          localStorage.setItem(key, JSON.stringify(filtered));
+        }
+      }
+    }
+  } catch {}
+
+  if (db) {
+    try {
+      await deleteDoc(doc(db, 'accounts', cleanKey));
+    } catch {}
+    try {
+      await deleteDoc(doc(db, 'users', emailOrId));
+    } catch {}
+  }
+}
+
 export const RESERVED_USERNAMES = [
   'admin',
   'administrator',
@@ -546,6 +590,7 @@ interface AuthContextType {
   signUpWithEmail: (email: string, pass: string, name: string, avatarUrl: string) => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   adminChangeUserPassword: (email: string, newPass: string) => Promise<void>;
+  adminDeleteUserAccount: (emailOrId: string) => Promise<void>;
   getAllUsers: () => Promise<SavedUserAccount[]>;
   resetPassword: (email: string, newPass: string) => Promise<void>;
   signInAsGuest: () => Promise<void>;
@@ -937,6 +982,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Please enter your password.');
     }
 
+    const bannedList = getStoredBannedUsers();
+    const bannedMatch = bannedList.find(b => 
+      (b.email && b.email.trim().toLowerCase() === cleanEmail)
+    );
+    if (bannedMatch) {
+      throw new Error(`Your account has been banned by an administrator. Reason: ${bannedMatch.reason || 'Violation of community guidelines'}`);
+    }
+
     let authSuccess = false;
     let loggedInUser: User | null = null;
     let authErrorCode: string | null = null;
@@ -1203,6 +1256,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await updateUserBioAndAvatar(newUsername, userProfile?.photoURL || '', userProfile?.bio);
   };
 
+  const adminDeleteUserAccount = async (emailOrId: string) => {
+    await adminDeleteUser(emailOrId);
+    if (
+      userProfile?.email?.trim().toLowerCase() === emailOrId.trim().toLowerCase() ||
+      userProfile?.uid === emailOrId ||
+      currentUser?.email?.trim().toLowerCase() === emailOrId.trim().toLowerCase()
+    ) {
+      await logout();
+    }
+  };
+
   const logout = async () => {
     setIsAdminAuthenticated(false);
     try {
@@ -1234,6 +1298,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signUpWithEmail,
         signInWithEmail,
         adminChangeUserPassword,
+        adminDeleteUserAccount,
         getAllUsers: getAllAccountsAsync,
         resetPassword: adminChangeUserPassword,
         signInAsGuest,

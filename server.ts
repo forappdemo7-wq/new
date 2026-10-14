@@ -19,6 +19,8 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  // Trust proxy for reverse proxies in hosted container environments (Cloud Run / iFrames)
+  app.set('trust proxy', 1);
   const server = http.createServer(app);
   const PORT = Number(process.env.PORT) || 3000;
 

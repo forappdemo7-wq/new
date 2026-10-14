@@ -10,6 +10,7 @@ import {
   toggleWorkLike,
   subscribeWorkComments,
   getWorkLikesCount,
+  useLikesSync,
 } from '../../services/interactionService';
 
 interface MediaCardProps {
@@ -25,6 +26,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const { navigate } = useRouter();
   const { isFavorite, toggleFavoriteWork, progress } = useLibrary();
   const { currentUser, userProfile, openAuthModal } = useAuth();
+  const likesVersion = useLikesSync();
 
   const [imageFailed, setImageFailed] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -72,7 +74,8 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     handleLikeToggle(e);
   };
 
-  const activeUserId = currentUser?.uid || userProfile?.uid;
+  const activeUserId = userProfile?.uid || currentUser?.uid;
+  const alternateUserId = currentUser?.uid;
   const activeDisplayName = userProfile?.displayName || currentUser?.displayName || 'Reader';
   const activeAvatar =
     userProfile?.photoURL ||
@@ -81,12 +84,17 @@ export const MediaCard: React.FC<MediaCardProps> = ({
 
   useEffect(() => {
     if (!work?.id) return;
-    const unsub = subscribeWorkLikes(work.id, activeUserId, (likesData, userLiked) => {
-      setLoadedLikes(likesData);
-      setIsLiked(userLiked);
-    });
+    const unsub = subscribeWorkLikes(
+      work.id,
+      activeUserId,
+      (likesData, userLiked) => {
+        setLoadedLikes(likesData);
+        setIsLiked(userLiked);
+      },
+      alternateUserId
+    );
     return () => unsub();
-  }, [work?.id, activeUserId]);
+  }, [work?.id, activeUserId, alternateUserId]);
 
   const favorited = isFavorite(work.id);
   const userProgress = progress[work.id];
@@ -162,7 +170,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     setIsLiked(optimisticLiked);
     if (optimisticLiked) {
       setLoadedLikes([
-        ...prevLikes.filter((l) => l.userId !== activeUserId),
+        ...prevLikes.filter((l) => l.userId !== activeUserId && l.userId !== alternateUserId),
         {
           id: `like-${work.id}-${activeUserId}`,
           workId: work.id,
@@ -175,7 +183,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       setLikeFeedback('Liked!');
       setTimeout(() => setLikeFeedback(null), 2000);
     } else {
-      setLoadedLikes(prevLikes.filter((l) => l.userId !== activeUserId));
+      setLoadedLikes(prevLikes.filter((l) => l.userId !== activeUserId && l.userId !== alternateUserId));
       setLikeFeedback('Unliked');
       setTimeout(() => setLikeFeedback(null), 1500);
     }
@@ -208,14 +216,12 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     navigate(`/${prefix}/${work.slug}#comments`);
   };
 
-  const likesList = (loadedLikes || []).filter(
-    (l) => l.userId && !l.userId.startsWith('guest-')
-  );
+  const likesList = loadedLikes || [];
   const currentLikesCount = loadedLikes !== null
-    ? Math.max(likesList.length, work.likesCount || 0)
-    : getWorkLikesCount(work);
+    ? likesList.length
+    : (work.likesCount || 0);
   const currentCommentsCount = loadedCommentsCount !== null
-    ? Math.max(loadedCommentsCount, work.commentsCount || 0)
+    ? loadedCommentsCount
     : (work.commentsCount || 0);
 
   /* ──────────────────────────────────────────────────────────────── */

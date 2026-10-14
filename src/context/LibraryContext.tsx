@@ -21,11 +21,15 @@ import {
   getStoredAudits,
   logLicenseAudit,
   getStoredBannedUsers,
-  saveStoredBannedUsers
+  saveStoredBannedUsers,
+  markWorkAsDeleted,
+  clearDeletedWorks,
+  getDeletedWorkIds
 } from '../services/storage';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { doc, setDoc, deleteDoc, onSnapshot, collection } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, onSnapshot, collection, getDocs } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
+import { sanitizeFirestoreData } from '../utils/firestoreSanitizer';
 
 interface LibraryContextType {
   works: Work[];
@@ -73,7 +77,7 @@ const LibraryContext = createContext<LibraryContextType | null>(null);
 
 export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { currentUser, userProfile } = useAuth();
-  const activeUserId = currentUser?.uid || userProfile?.uid;
+  const activeUserId = userProfile?.uid || currentUser?.uid;
 
   const [works, setWorks] = useState<Work[]>(() => getStoredWorks());
   const [favorites, setFavorites] = useState<string[]>(() => getStoredFavorites());
@@ -190,7 +194,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
   }, [activeUserId]);
 
-  // Listen to custom works added to Firestore
+  // Listen to custom works and engagement counters in Firestore in real-time
   useEffect(() => {
     if (!db) return;
     const pathWorks = 'works';
@@ -198,39 +202,68 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       collection(db, pathWorks),
       (snapshot) => {
         if (!snapshot.empty) {
-          const remoteWorks: Work[] = [];
+          const remoteUpdates = new Map<string, any>();
+          const remoteWorksList: Work[] = [];
+
           snapshot.forEach((docSnap) => {
-            const data = docSnap.data() as Work;
-            if (data && data.title && data.slug) {
-              remoteWorks.push(data);
+            const data = docSnap.data() as any;
+            if (!data) return;
+            const docId = docSnap.id;
+            const fullItem: Work = {
+              ...data,
+              id: data.id || docId,
+            };
+            remoteUpdates.set(docId, fullItem);
+            if (fullItem.id) {
+              remoteUpdates.set(fullItem.id, fullItem);
+            }
+            if (data.slug) {
+              remoteUpdates.set(data.slug.toLowerCase(), fullItem);
+            }
+            if (data.title && data.slug) {
+              remoteWorksList.push(fullItem);
             }
           });
-          if (remoteWorks.length > 0) {
-            setWorks((prev) => {
-              const remoteMap = new Map<string, Work>();
-              remoteWorks.forEach((rw) => remoteMap.set(rw.id, rw));
 
-              let hadEngagementChange = false;
+          setWorks((prev) => {
+            let hadEngagementChange = false;
+            const deletedIds = getDeletedWorkIds();
 
-              const next = prev.map((w) => {
-                const rw = remoteMap.get(w.id);
-                if (rw) {
-                  const newLikes = typeof rw.likesCount === 'number' ? Math.max(0, rw.likesCount) : w.likesCount;
-                  const newComments = typeof rw.commentsCount === 'number' ? Math.max(0, rw.commentsCount) : w.commentsCount;
+            const next = prev
+              .filter((w) => !deletedIds.has(w.id) && (!w.slug || !deletedIds.has(w.slug)))
+              .map((w) => {
+                const remote =
+                  remoteUpdates.get(w.id) ||
+                  (w.slug ? remoteUpdates.get(w.slug.toLowerCase()) : undefined);
+
+                if (remote) {
+                  const newLikes =
+                    typeof remote.likesCount === 'number'
+                      ? Math.max(0, remote.likesCount)
+                      : w.likesCount;
+                  const newComments =
+                    typeof remote.commentsCount === 'number'
+                      ? Math.max(0, remote.commentsCount)
+                      : w.commentsCount;
+
                   if (newLikes !== w.likesCount || newComments !== w.commentsCount) {
                     hadEngagementChange = true;
                   }
+
+                  const hasFullInfo = Boolean(remote.title && remote.slug);
+
                   return {
                     ...w,
-                    ...rw,
+                    ...(hasFullInfo ? remote : {}),
                     // Keep full chapter contents if local was hydrated
-                    chapters: (w.chapters && w.chapters.length > 0)
-                      ? w.chapters.map((ch, idx) => ({
-                          ...ch,
-                          ...(rw.chapters?.[idx] || {}),
-                          content: ch.content || rw.chapters?.[idx]?.content || '',
-                        }))
-                      : rw.chapters || w.chapters,
+                    chapters:
+                      w.chapters && w.chapters.length > 0
+                        ? w.chapters.map((ch, idx) => ({
+                            ...ch,
+                            ...(remote.chapters?.[idx] || {}),
+                            content: ch.content || remote.chapters?.[idx]?.content || '',
+                          }))
+                        : remote.chapters || w.chapters,
                     likesCount: newLikes,
                     commentsCount: newComments,
                   };
@@ -238,25 +271,33 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 return w;
               });
 
-              // Also append any new works created on another device
-              remoteWorks.forEach((rw) => {
-                if (!next.some((w) => w.id === rw.id)) {
-                  next.unshift(rw);
-                }
-              });
-
-              saveStoredWorks(next);
-
-              if (hadEngagementChange) {
-                try {
-                  window.dispatchEvent(new CustomEvent('getnow:likes-updated'));
-                  window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
-                } catch {}
+            // Also append any new works created on another device that aren't yet in prev and not deleted
+            remoteWorksList.forEach((rw) => {
+              if (deletedIds.has(rw.id) || (rw.slug && deletedIds.has(rw.slug))) {
+                return;
               }
-
-              return next;
+              if (
+                !next.some(
+                  (w) =>
+                    w.id === rw.id ||
+                    (w.slug && rw.slug && w.slug.toLowerCase() === rw.slug.toLowerCase())
+                )
+              ) {
+                next.unshift(rw);
+                hadEngagementChange = true;
+              }
             });
-          }
+
+            saveStoredWorks(next);
+
+            if (hadEngagementChange) {
+              try {
+                window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
+              } catch {}
+            }
+
+            return next;
+          });
         }
       },
       (error) => {
@@ -268,7 +309,6 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         try {
-          window.dispatchEvent(new CustomEvent('getnow:likes-updated'));
           window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
         } catch {}
       }
@@ -341,7 +381,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         const targetUid = auth.currentUser?.uid || activeUserId;
         if (targetUid) {
           const userProgRef = doc(db, 'users', targetUid, 'reading_progress', prog.workId);
-          setDoc(userProgRef, updatedProg, { merge: true }).catch(err => {
+          setDoc(userProgRef, sanitizeFirestoreData(updatedProg), { merge: true }).catch(err => {
             console.warn('Failed to sync user reading progress to cloud:', err);
           });
         }
@@ -356,7 +396,6 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const targetUid = auth.currentUser?.uid || activeUserId;
       if (targetUid) {
         try {
-          const { getDocs } = await import('firebase/firestore');
           const progressCol = collection(db, 'users', targetUid, 'reading_progress');
           const snap = await getDocs(progressCol);
           snap.forEach(d => {
@@ -378,12 +417,12 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const user = auth.currentUser;
       if (user) {
         const userBmRef = doc(db, 'users', user.uid, 'bookmarks', newBookmark.id);
-        setDoc(userBmRef, { ...newBookmark, userId: user.uid }).catch(err => {
+        setDoc(userBmRef, sanitizeFirestoreData({ ...newBookmark, userId: user.uid })).catch(err => {
           console.warn('Failed to sync bookmark to cloud:', err);
         });
       } else {
         const path = `bookmarks/${newBookmark.id}`;
-        setDoc(doc(db, 'bookmarks', newBookmark.id), newBookmark).catch(err => {
+        setDoc(doc(db, 'bookmarks', newBookmark.id), sanitizeFirestoreData(newBookmark)).catch(err => {
           handleFirestoreError(err, OperationType.WRITE, path);
         });
       }
@@ -437,22 +476,62 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     if (db) {
       // Create lightweight work document for main works collection (under 1MB Firestore limit)
-      const sanitizedChapters = (updatedWork.chapters || []).map(ch => ({
-        id: ch.id,
-        workId: ch.workId,
-        chapterNumber: ch.chapterNumber,
-        number: ch.number,
-        title: ch.title,
-        slug: ch.slug,
-        wordCount: ch.wordCount,
-        // Omit huge multi-megabyte content string from the main work doc
-        content: ch.content && ch.content.length > 5000 ? ch.content.substring(0, 200) + '...' : (ch.content || '')
-      }));
+      const sanitizedChapters = (updatedWork.chapters || []).map(ch => {
+        const item: any = {
+          id: ch.id || '',
+          workId: ch.workId || work.id,
+          chapterNumber: ch.chapterNumber ?? ch.number ?? 1,
+          number: ch.number ?? ch.chapterNumber ?? 1,
+          title: ch.title || `Chapter ${ch.number || 1}`,
+          slug: ch.slug || `chapter-${ch.number || 1}`,
+          content: ch.content && ch.content.length > 500 ? ch.content.substring(0, 200) + '...' : (ch.content || '')
+        };
+        if (typeof ch.wordCount === 'number') item.wordCount = ch.wordCount;
+        if (typeof ch.pagesCount === 'number') item.pagesCount = ch.pagesCount;
+        else if (Array.isArray(ch.pages)) item.pagesCount = ch.pages.length;
+        if (typeof ch.volumeNumber === 'number') item.volumeNumber = ch.volumeNumber;
+        if (ch.releaseDate) item.releaseDate = ch.releaseDate;
+        if (ch.language) item.language = ch.language;
+        // Do NOT embed heavy comic/manga page arrays in the root work document;
+        // Chapter pages are stored in 'works/{workId}/chapters/{chapterId}' subdocuments.
+        return item;
+      });
 
-      const workMeta = {
-        ...updatedWork,
-        chapters: sanitizedChapters
-      };
+      // Avoid embedding multi-megabyte base64 strings in the main work document
+      let coverImageClean = updatedWork.coverImage || '';
+      let coverImageUrlClean = updatedWork.coverImageUrl || '';
+
+      if (coverImageClean.startsWith('data:') && coverImageClean.length > 100000) {
+        // If an oversized raw base64 data URL was provided, strip for root document to stay well under Firestore 1MB
+        coverImageClean = '';
+      }
+      if (coverImageUrlClean.startsWith('data:') && coverImageUrlClean.length > 100000) {
+        coverImageUrlClean = '';
+      }
+
+      const workMeta = sanitizeFirestoreData({
+        id: updatedWork.id,
+        title: updatedWork.title,
+        slug: updatedWork.slug || '',
+        description: (updatedWork.description || '').substring(0, 2000),
+        coverImage: coverImageClean.startsWith('data:') && coverImageClean.length > 50000 ? '' : coverImageClean,
+        coverImageUrl: coverImageUrlClean.startsWith('data:') && coverImageUrlClean.length > 50000 ? '' : coverImageUrlClean,
+        authors: updatedWork.authors || [],
+        genres: updatedWork.genres || [],
+        demographic: updatedWork.demographic || 'all',
+        licenseCode: updatedWork.licenseCode || 'CC-BY-4.0',
+        verificationStatus: updatedWork.verificationStatus || 'verified',
+        verifiedBy: updatedWork.verifiedBy || '',
+        sourceUrl: updatedWork.sourceUrl || '',
+        jurisdictionNotes: updatedWork.jurisdictionNotes || '',
+        publisherId: updatedWork.publisherId || '',
+        publisherEmail: updatedWork.publisherEmail || '',
+        publisherName: updatedWork.publisherName || '',
+        chaptersCount: (updatedWork.chapters || []).length,
+        chapters: sanitizedChapters,
+        createdAt: updatedWork.createdAt,
+        updatedAt: updatedWork.updatedAt
+      });
 
       const path = `works/${work.id}`;
       setDoc(doc(db, 'works', work.id), workMeta).then(() => {
@@ -463,10 +542,11 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
             // Ensure each chapter subdocument is safely under 800KB
             const maxLen = 800000;
             const safeContent = (ch.content || '').substring(0, maxLen);
-            setDoc(doc(db, 'works', work.id, 'chapters', ch.id), {
+            const cleanChapterDoc = sanitizeFirestoreData({
               ...ch,
               content: safeContent
-            }).catch(err => {
+            });
+            setDoc(doc(db, 'works', work.id, 'chapters', ch.id), cleanChapterDoc).catch(err => {
               console.warn(`Could not save chapter ${ch.id} subdocument:`, err);
             });
           }
@@ -488,8 +568,18 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const removeWork = useCallback((workId: string) => {
+    let targetSlug: string | undefined;
+
     setWorks(prevWorks => {
-      const next = prevWorks.filter(w => w.id !== workId);
+      const target = prevWorks.find(w => w.id === workId || w.slug === workId);
+      if (target?.slug) targetSlug = target.slug;
+      const targetId = target?.id || workId;
+
+      markWorkAsDeleted(targetId, targetSlug);
+
+      const next = prevWorks.filter(
+        w => w.id !== targetId && w.id !== workId && (!targetSlug || w.slug !== targetSlug)
+      );
       saveStoredWorks(next);
       return next;
     });
@@ -499,10 +589,14 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       deleteDoc(doc(db, 'works', workId)).catch(err => {
         handleFirestoreError(err, OperationType.DELETE, path);
       });
+      if (targetSlug && targetSlug !== workId) {
+        deleteDoc(doc(db, 'works', targetSlug)).catch(() => {});
+      }
     }
   }, []);
 
   const restoreSeedCatalog = useCallback(() => {
+    clearDeletedWorks();
     const seeded = resetWorksToSeed();
     setWorks(seeded);
     setAudits(getStoredAudits());
@@ -563,7 +657,7 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     if (db) {
-      setDoc(doc(db, 'banned_users', userId), newBannedUser).catch(err => {
+      setDoc(doc(db, 'banned_users', userId), sanitizeFirestoreData(newBannedUser)).catch(err => {
         console.warn('Failed to sync banned user to Firestore:', err);
       });
     }

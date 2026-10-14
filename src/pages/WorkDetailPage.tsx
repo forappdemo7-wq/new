@@ -6,7 +6,7 @@ import { getLicenseInfo } from '../data/licenses';
 import { ReportModal } from '../components/modals/ReportModal';
 import { ExportEreaderModal } from '../components/modals/ExportEreaderModal';
 import { generateGhostCoverSvg } from '../services/coverService';
-import { subscribeWorkLikes, toggleWorkLike, subscribeWorkComments } from '../services/interactionService';
+import { subscribeWorkLikes, toggleWorkLike, subscribeWorkComments, useLikesSync } from '../services/interactionService';
 import { WorkCommentsSection } from '../components/social/WorkCommentsSection';
 import {
   ArrowLeft,
@@ -26,8 +26,11 @@ import {
   User,
   Sparkles,
   Search,
+  Trash2,
+  Shield,
 } from 'lucide-react';
 import { Author, WorkLike } from '../types';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface WorkDetailProps {
   slug: string;
@@ -35,11 +38,13 @@ interface WorkDetailProps {
 
 export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
   const { navigate } = useRouter();
-  const { getWorkBySlug, isFavorite, toggleFavoriteWork, progress, works } = useLibrary();
-  const { currentUser, userProfile, openAuthModal } = useAuth();
+  const { getWorkBySlug, isFavorite, toggleFavoriteWork, progress, works, removeWork } = useLibrary();
+  const { currentUser, userProfile, openAuthModal, isAdmin } = useAuth();
+  const likesVersion = useLikesSync();
 
   const [showReportModal, setShowReportModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [copiedCitation, setCopiedCitation] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
 
@@ -80,7 +85,8 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
   const cleanSlug = (slug || '').split('#')[0].split('?')[0];
   const work = getWorkBySlug(cleanSlug);
 
-  const activeUserId = currentUser?.uid || userProfile?.uid;
+  const activeUserId = userProfile?.uid || currentUser?.uid;
+  const alternateUserId = currentUser?.uid;
   const activeDisplayName = userProfile?.displayName || currentUser?.displayName || 'Reader';
   const activeAvatar =
     userProfile?.photoURL ||
@@ -91,10 +97,15 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
 
   useEffect(() => {
     if (!work) return;
-    const unsubLikes = subscribeWorkLikes(work.id, activeUserId, (loadedLikes, userLiked) => {
-      setLikes(loadedLikes);
-      setIsLiked(userLiked);
-    });
+    const unsubLikes = subscribeWorkLikes(
+      work.id,
+      activeUserId,
+      (loadedLikes, userLiked) => {
+        setLikes(loadedLikes);
+        setIsLiked(userLiked);
+      },
+      alternateUserId
+    );
 
     const unsubComments = subscribeWorkComments(work.id, (loadedComments) => {
       setCommentsCount(loadedComments.length);
@@ -104,7 +115,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
       unsubLikes();
       unsubComments();
     };
-  }, [work?.id, activeUserId]);
+  }, [work?.id, activeUserId, alternateUserId]);
 
   // Robust smooth scroll to comments or specific comment anchor with retries
   useEffect(() => {
@@ -167,7 +178,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
     setIsLiked(optimisticLiked);
     if (optimisticLiked) {
       setLikes([
-        ...prevLikes.filter((l) => l.userId !== activeUserId),
+        ...prevLikes.filter((l) => l.userId !== activeUserId && l.userId !== alternateUserId),
         {
           id: `like-${work.id}-${activeUserId}`,
           workId: work.id,
@@ -185,7 +196,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
       }
       setTimeout(() => setLikeToast(null), 3500);
     } else {
-      setLikes(prevLikes.filter((l) => l.userId !== activeUserId));
+      setLikes(prevLikes.filter((l) => l.userId !== activeUserId && l.userId !== alternateUserId));
       setLikeToast('Like removed');
       setTimeout(() => setLikeToast(null), 2500);
     }
@@ -349,7 +360,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                   />
                   <span>{isLiked ? 'Liked' : 'Like'}</span>
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300">
-                    {Math.max(likes.length, work.likesCount || 0)}
+                    {likes.length}
                   </span>
                 </button>
 
@@ -363,7 +374,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                   <MessageSquare className="w-4 h-4 text-[#C25E3A]" />
                   <span>Comments</span>
                   <span className="px-2 py-0.5 rounded-full text-[11px] font-mono font-bold bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300">
-                    {Math.max(commentsCount, work.commentsCount || 0)}
+                    {commentsCount}
                   </span>
                 </button>
               </div>
@@ -371,6 +382,34 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
               {likeToast && (
                 <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs text-center font-medium animate-in fade-in duration-150">
                   {likeToast}
+                </div>
+              )}
+
+              {/* Admin Actions Bar */}
+              {isAdmin && (
+                <div className="pt-2 border-t border-dashed border-stone-200 dark:border-stone-800">
+                  <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-200/70 dark:border-amber-800/40 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider">
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>Admin Controls</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => navigate('/admin')}
+                        className="flex-1 py-1.5 px-2.5 bg-white dark:bg-[#151820] hover:bg-stone-50 dark:hover:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold text-center transition-colors cursor-pointer"
+                      >
+                        Admin Panel
+                      </button>
+                      <button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                        title="Permanently delete this work from the catalog"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Work</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -666,8 +705,8 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                     Readers Who Liked
                   </h3>
                   <p className="text-xs text-stone-500 dark:text-stone-400">
-                    {likes.filter((l) => l.userId && !l.userId.startsWith('guest-')).length}{' '}
-                    {likes.filter((l) => l.userId && !l.userId.startsWith('guest-')).length === 1 ? 'reader' : 'readers'} appreciated this work
+                    {likes.length}{' '}
+                    {likes.length === 1 ? 'reader' : 'readers'} appreciated this work
                   </p>
                 </div>
               </div>
@@ -692,9 +731,9 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                 />
               </div>
 
-              {likes.filter((l) => l.userId && !l.userId.startsWith('guest-') && (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim())).length > 0 ? (
+              {likes.filter((l) => (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim())).length > 0 ? (
                 likes
-                  .filter((l) => l.userId && !l.userId.startsWith('guest-') && (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim()))
+                  .filter((l) => (l.userName || '').toLowerCase().includes(likerSearchQuery.toLowerCase().trim()))
                   .map((liker) => (
                   <div
                     key={liker.userId || liker.userName}
@@ -745,6 +784,21 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
           </div>
         </div>
       )}
+
+      {/* Admin Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        title="Delete Work from Catalog?"
+        message={`Are you sure you want to permanently delete "${work.title}"?\n\nThis will remove it from the catalog, search index, and delete its database entries.`}
+        confirmLabel="Delete Work"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={() => {
+          removeWork(work.id);
+          navigate('/library');
+        }}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 };

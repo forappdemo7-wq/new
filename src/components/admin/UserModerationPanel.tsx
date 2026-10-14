@@ -3,6 +3,7 @@ import { useLibrary } from '../../context/LibraryContext';
 import { useRouter } from '../../context/RouterContext';
 import { useAuth, getAllStoredAccounts, SavedUserAccount } from '../../context/AuthContext';
 import { Work, BannedUser } from '../../types';
+import { getDeletedUserIds } from '../../services/storage';
 import {
   UserX,
   ShieldAlert,
@@ -29,6 +30,7 @@ import {
   ShieldCheck,
   Check
 } from 'lucide-react';
+import { ConfirmModal } from '../common/ConfirmModal';
 
 export interface AdminUserItem {
   id: string;
@@ -45,7 +47,7 @@ export interface AdminUserItem {
 export const UserModerationPanel: React.FC = () => {
   const { works, bannedUsers, banUser, unbanUser, removeWork } = useLibrary();
   const { navigate } = useRouter();
-  const { adminChangeUserPassword, getAllUsers } = useAuth();
+  const { adminChangeUserPassword, adminDeleteUserAccount, getAllUsers } = useAuth();
 
   const [registeredAccounts, setRegisteredAccounts] = useState<SavedUserAccount[]>(() => getAllStoredAccounts());
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false);
@@ -58,9 +60,29 @@ export const UserModerationPanel: React.FC = () => {
   // Password Change Modal state
   const [selectedUserForPassword, setSelectedUserForPassword] = useState<AdminUserItem | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [deleteWorkCandidate, setDeleteWorkCandidate] = useState<Work | null>(null);
+  const [unbanCandidate, setUnbanCandidate] = useState<AdminUserItem | null>(null);
+  const [selectedUserForAccountDelete, setSelectedUserForAccountDelete] = useState<AdminUserItem | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(true);
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [passwordModalError, setPasswordModalError] = useState<string | null>(null);
+
+  const handleDeleteAccountConfirm = async () => {
+    if (!selectedUserForAccountDelete) return;
+    setIsDeletingAccount(true);
+    try {
+      const targetKey = selectedUserForAccountDelete.email || selectedUserForAccountDelete.id;
+      await adminDeleteUserAccount(targetKey);
+      showNotification(`Account ${selectedUserForAccountDelete.name} (${targetKey}) permanently deleted.`);
+      setSelectedUserForAccountDelete(null);
+      await refreshAccounts();
+    } catch (err: any) {
+      showNotification(`Failed to delete account: ${err?.message || 'Unknown error'}`);
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
 
   // Ban Modal state
   const [selectedUserForBan, setSelectedUserForBan] = useState<AdminUserItem | null>(null);
@@ -103,11 +125,16 @@ export const UserModerationPanel: React.FC = () => {
   // Consolidate all users: Registered accounts + Uploaders + Banned users
   const allUsers = useMemo(() => {
     const map = new Map<string, AdminUserItem>();
+    const deletedUserIds = getDeletedUserIds();
 
     // 1. Add all registered accounts from local storage + Firestore
     registeredAccounts.forEach((acc) => {
       const email = (acc.email || '').trim().toLowerCase();
       const uid = acc.profile?.uid || `user-${email.replace(/[^a-z0-9]/g, '-')}`;
+      if (deletedUserIds.has(email) || deletedUserIds.has(uid) || (email && deletedUserIds.has(email))) {
+        return;
+      }
+
       const name = acc.profile?.displayName || (email === 'first@user.com' ? 'first_user' : email.split('@')[0]) || 'Reader';
       const role = (email === 'admin@getnow.org' || email.startsWith('admin@')) ? 'admin' : (acc.profile?.role === 'admin' ? 'admin' : 'reader');
       const photoURL = acc.profile?.photoURL;
@@ -135,6 +162,10 @@ export const UserModerationPanel: React.FC = () => {
     works.forEach((w) => {
       const pubId = w.publisherId || `author-${(w.authors[0]?.slug || 'anonymous')}`;
       const pubEmail = (w.publisherEmail || '').trim().toLowerCase();
+      if (deletedUserIds.has(pubEmail) || deletedUserIds.has(pubId) || (pubEmail && deletedUserIds.has(pubEmail))) {
+        return;
+      }
+
       const pubName = w.publisherName || w.authors[0]?.name || 'Anonymous Creator';
       const key = pubEmail || pubId;
 
@@ -167,6 +198,9 @@ export const UserModerationPanel: React.FC = () => {
     // 3. Add banned users who haven't uploaded or weren't registered yet
     bannedUsers.forEach((banned) => {
       const email = (banned.email || '').trim().toLowerCase();
+      const uid = banned.id;
+      if (deletedUserIds.has(email) || deletedUserIds.has(uid)) return;
+
       const key = email || banned.id;
       if (!map.has(key)) {
         map.set(key, {
@@ -278,7 +312,7 @@ export const UserModerationPanel: React.FC = () => {
   const handleManualBanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualEmail && !manualUid) {
-      alert('Please provide an email or User ID to ban.');
+      showNotification('Please provide an email or User ID to ban.');
       return;
     }
 
@@ -290,10 +324,7 @@ export const UserModerationPanel: React.FC = () => {
   };
 
   const handleUnban = (user: AdminUserItem) => {
-    if (confirm(`Unban user ${user.name} (${user.email || user.id})?`)) {
-      unbanUser(user.id);
-      showNotification(`User ${user.name} has been unbanned and restored to good standing.`);
-    }
+    setUnbanCandidate(user);
   };
 
   const handleCopyEmail = (email: string) => {
@@ -585,12 +616,7 @@ export const UserModerationPanel: React.FC = () => {
                             <ExternalLink className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => {
-                              if (confirm(`Delete work "${w.title}"?`)) {
-                                removeWork(w.id);
-                                showNotification(`Work "${w.title}" deleted.`);
-                              }
-                            }}
+                            onClick={() => setDeleteWorkCandidate(w)}
                             title="Delete this work"
                             className="p-1 text-stone-400 hover:text-rose-600 cursor-pointer"
                           >
@@ -632,6 +658,16 @@ export const UserModerationPanel: React.FC = () => {
                       <span>Ban User</span>
                     </button>
                   )}
+
+                  {/* Delete Account Button */}
+                  <button
+                    onClick={() => setSelectedUserForAccountDelete(user)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-stone-800 hover:bg-rose-900 text-white transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
+                    title="Permanently delete this user account"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Account</span>
+                  </button>
                 </div>
               </div>
             ))}
@@ -923,6 +959,51 @@ export const UserModerationPanel: React.FC = () => {
         </div>
       )}
 
+      {/* In-app Confirmation Modals replacing browser window.confirm */}
+      <ConfirmModal
+        isOpen={Boolean(deleteWorkCandidate)}
+        title="Delete Work?"
+        message={`Are you sure you want to delete "${deleteWorkCandidate?.title}"?\n\nThis will remove the publication from the public catalog and database.`}
+        confirmLabel="Delete Work"
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={() => {
+          if (deleteWorkCandidate) {
+            removeWork(deleteWorkCandidate.id);
+            showNotification(`Work "${deleteWorkCandidate.title}" deleted.`);
+            setDeleteWorkCandidate(null);
+          }
+        }}
+        onCancel={() => setDeleteWorkCandidate(null)}
+      />
+
+      <ConfirmModal
+        isOpen={Boolean(unbanCandidate)}
+        title="Unban User Account?"
+        message={`Are you sure you want to unban ${unbanCandidate?.name} (${unbanCandidate?.email || unbanCandidate?.id})?\n\nTheir account will be restored to good standing and permitted to interact with the platform.`}
+        confirmLabel="Unban User"
+        cancelLabel="Cancel"
+        isDestructive={false}
+        onConfirm={() => {
+          if (unbanCandidate) {
+            unbanUser(unbanCandidate.id);
+            showNotification(`User ${unbanCandidate.name} has been unbanned and restored.`);
+            setUnbanCandidate(null);
+          }
+        }}
+        onCancel={() => setUnbanCandidate(null)}
+      />
+
+      <ConfirmModal
+        isOpen={Boolean(selectedUserForAccountDelete)}
+        title="Permanently Delete User Account?"
+        message={`Are you sure you want to delete account ${selectedUserForAccountDelete?.name} (${selectedUserForAccountDelete?.email || selectedUserForAccountDelete?.id})?\n\nThis action cannot be undone and will permanently delete the user's profile and credentials.`}
+        confirmLabel={isDeletingAccount ? "Deleting..." : "Delete Account"}
+        cancelLabel="Cancel"
+        isDestructive={true}
+        onConfirm={handleDeleteAccountConfirm}
+        onCancel={() => setSelectedUserForAccountDelete(null)}
+      />
     </div>
   );
 };

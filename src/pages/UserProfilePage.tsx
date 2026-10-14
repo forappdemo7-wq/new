@@ -182,6 +182,11 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
     if (!profile?.uid) return [];
     return works.filter((w) => {
       try {
+        const userStored = localStorage.getItem(`getnow_user_liked_${profile.uid}`);
+        if (userStored) {
+          const uList = JSON.parse(userStored);
+          if (Array.isArray(uList) && uList.includes(w.id)) return true;
+        }
         const raw = localStorage.getItem(`getnow_work_likes_${w.id}`);
         if (!raw) return false;
         const list = JSON.parse(raw);

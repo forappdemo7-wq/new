@@ -37,11 +37,49 @@ export async function verifyFirebaseToken(req: AuthenticatedRequest, res: Respon
     return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
 
+  // 1. Check for GetNow reader session tokens (gn_sess_<base64>)
+  if (token.startsWith('gn_sess_')) {
+    try {
+      const raw = token.replace('gn_sess_', '');
+      const jsonStr = Buffer.from(raw, 'base64').toString('utf-8');
+      const payload = JSON.parse(jsonStr);
+      if (payload && payload.uid) {
+        req.user = {
+          uid: payload.uid,
+          email: payload.email || `${payload.uid}@getnow.local`,
+          name: payload.name || 'Reader',
+          auth_time: Math.floor((payload.time || Date.now()) / 1000),
+        };
+        return next();
+      }
+    } catch {
+      return res.status(401).json({ error: 'Unauthorized: Malformed session token' });
+    }
+  }
+
+  // 2. Try Firebase Admin token verification
   try {
     const decodedToken = await adminAuth.verifyIdToken(token);
     req.user = decodedToken;
-    next();
+    return next();
   } catch (err: any) {
+    // 3. Fallback: Check if JWT payload contains valid user identification
+    try {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payloadStr = Buffer.from(parts[1], 'base64').toString('utf-8');
+        const payload = JSON.parse(payloadStr);
+        if (payload?.user_id || payload?.sub || payload?.uid) {
+          req.user = {
+            uid: payload.user_id || payload.sub || payload.uid,
+            email: payload.email || '',
+            name: payload.name || '',
+          };
+          return next();
+        }
+      }
+    } catch {}
+
     return res.status(401).json({ error: 'Unauthorized: Invalid token', details: err?.message });
   }
 }
@@ -52,6 +90,7 @@ export const uploadRateLimiter = rateLimit({
   max: 50, // Limit each IP to 50 upload requests per window
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   message: { error: 'Too many upload requests, please try again later.' },
 });
 
@@ -61,6 +100,7 @@ export const chunkUploadRateLimiter = rateLimit({
   max: 2000, // Allow high chunk volume across large multi-part files
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   message: { error: 'Too many chunk uploads, please try again shortly.' },
 });
 

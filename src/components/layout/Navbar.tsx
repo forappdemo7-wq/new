@@ -61,7 +61,8 @@ export const Navbar: React.FC = () => {
   };
 
   const handlePublishClick = () => {
-    if (!currentUser || currentUser.isAnonymous) {
+    const activeReader = currentUser || userProfile;
+    if (!activeReader || (activeReader as any).isAnonymous) {
       openAuthModal('signin');
     } else {
       setPublishModalOpen(true);
@@ -228,7 +229,7 @@ export const Navbar: React.FC = () => {
                         <button
                           onClick={() => {
                             setUserDropdownOpen(false);
-                            const myUid = currentUser?.uid || userProfile?.uid;
+                            const myUid = userProfile?.uid || currentUser?.uid;
                             if (myUid) {
                               handleNav(`/user/${myUid}`);
                             }

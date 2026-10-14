@@ -12,7 +12,9 @@ const STORAGE_KEYS = {
   SETTINGS: 'getnow_reader_settings_v6',
   AUDIT_LOGS: 'getnow_audit_logs_v6',
   JURISDICTION_PREF: 'getnow_jurisdiction_pref_v6',
-  BANNED_USERS: 'getnow_banned_users_v1'
+  BANNED_USERS: 'getnow_banned_users_v1',
+  DELETED_WORKS: 'getnow_deleted_works_v1',
+  DELETED_USERS: 'getnow_deleted_users_v1'
 };
 
 const BANNED_WORK_IDS = new Set([
@@ -27,8 +29,55 @@ const BANNED_WORK_IDS = new Set([
   'work-linkout-meteor'
 ]);
 
+export function getDeletedWorkIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_WORKS);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markWorkAsDeleted(workId: string, slug?: string): void {
+  try {
+    const deleted = getDeletedWorkIds();
+    if (workId) deleted.add(workId);
+    if (slug) deleted.add(slug);
+    safeSetLocalStorage(STORAGE_KEYS.DELETED_WORKS, JSON.stringify(Array.from(deleted)));
+  } catch {}
+}
+
+export function clearDeletedWorks(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.DELETED_WORKS);
+  } catch {}
+}
+
+export function getDeletedUserIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_USERS);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markUserAsDeleted(userIdOrEmail: string): void {
+  try {
+    const deleted = getDeletedUserIds();
+    if (userIdOrEmail) deleted.add(userIdOrEmail.trim().toLowerCase());
+    safeSetLocalStorage(STORAGE_KEYS.DELETED_USERS, JSON.stringify(Array.from(deleted)));
+  } catch {}
+}
+
 export function isRemovedWork(work: Work): boolean {
   if (BANNED_WORK_IDS.has(work.id) || BANNED_WORK_IDS.has(work.slug)) return true;
+  const deleted = getDeletedWorkIds();
+  if (deleted.has(work.id) || (work.slug && deleted.has(work.slug))) return true;
   const titleLower = (work.title || '').toLowerCase().trim();
   if (titleLower === 'dune' || titleLower === 'solo leveling' || titleLower === 'one piece') return true;
   return false;
@@ -59,8 +108,17 @@ export function saveChapterContent(chapterId: string, content: string): void {
   try {
     localStorage.setItem(`getnow_ch_txt_${chapterId}`, content);
   } catch (e) {
-    // If individual chapter save fails due to localStorage quota limit, memory cache preserves it
-    console.warn(`LocalStorage quota exceeded for chapter ${chapterId}, keeping in-memory session cache:`, e);
+    try {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('getnow_ch_txt_') && k !== `getnow_ch_txt_${chapterId}`) {
+          localStorage.removeItem(k);
+        }
+      }
+      localStorage.setItem(`getnow_ch_txt_${chapterId}`, content);
+    } catch (err) {
+      console.warn(`LocalStorage quota exceeded for chapter ${chapterId}, keeping in-memory cache:`, err);
+    }
   }
 }
 
@@ -92,85 +150,153 @@ export function getStoredWorks(): Work[] {
       localStorage.removeItem('getnow_catalog_works_v7_clean');
     } catch {}
 
+    const deletedIds = getDeletedWorkIds();
     const raw = localStorage.getItem(STORAGE_KEYS.WORKS);
     if (!raw) {
-      saveStoredWorks(SEED_WORKS);
-      return SEED_WORKS;
+      const initialWorks = SEED_WORKS.filter(s => !deletedIds.has(s.id) && !deletedIds.has(s.slug) && !isRemovedWork(s));
+      saveStoredWorks(initialWorks);
+      return initialWorks;
     }
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      saveStoredWorks(SEED_WORKS);
-      return SEED_WORKS;
+      const initialWorks = SEED_WORKS.filter(s => !deletedIds.has(s.id) && !deletedIds.has(s.slug) && !isRemovedWork(s));
+      saveStoredWorks(initialWorks);
+      return initialWorks;
     }
-    // Merge with SEED_WORKS to ensure latest cover images and chapters are up to date
-    const merged = SEED_WORKS.map(seed => {
-      const existing = parsed.find((p: Work) => p.id === seed.id || p.slug === seed.slug);
-      if (!existing) return seed;
-      return {
-        ...existing,
-        ...seed,
-        chapters: seed.chapters?.length ? seed.chapters : existing.chapters
-      };
-    });
-    // Also include any user-created or dynamically ingested works, excluding banned/removed works
+
+    // Available seed works exclude any deleted or banned works
+    const availableSeedWorks = SEED_WORKS.filter(s => !deletedIds.has(s.id) && !deletedIds.has(s.slug) && !isRemovedWork(s));
+
+    // Merge with available seed works.
+    // If a work was in parsed, we retain and update it.
+    // If it was NOT in parsed (e.g. deleted), we do NOT resurrect it!
+    const merged: Work[] = [];
+    const seenIds = new Set<string>();
+
+    // First, process parsed works that are not deleted or banned
     parsed.forEach((p: Work) => {
-      if (!merged.some(m => m.id === p.id) && !isRemovedWork(p)) {
-        // Re-hydrate chapter content if stripped
-        const rehydratedChapters = (p.chapters || []).map(ch => ({
-          ...ch,
-          content: ch.content || getChapterContent(ch.id) || ''
-        }));
+      if (!p || !p.id) return;
+      if (deletedIds.has(p.id) || (p.slug && deletedIds.has(p.slug)) || isRemovedWork(p)) return;
+
+      const matchingSeed = availableSeedWorks.find(s => s.id === p.id || (s.slug && p.slug === s.slug));
+      const rehydratedChapters = (p.chapters || []).map(ch => ({
+        ...ch,
+        content: ch.content || getChapterContent(ch.id) || ''
+      }));
+
+      if (matchingSeed) {
+        merged.push({
+          ...p,
+          ...matchingSeed,
+          chapters: matchingSeed.chapters?.length ? matchingSeed.chapters : rehydratedChapters
+        });
+      } else {
         merged.push({
           ...p,
           chapters: rehydratedChapters
         });
       }
+      seenIds.add(p.id);
+      if (p.slug) seenIds.add(p.slug);
     });
-    const cleaned = merged.filter(w => !isRemovedWork(w));
+
+    // If this is a pristine/first-time state where parsed only had some items, add untouched seed works
+    availableSeedWorks.forEach(seed => {
+      if (!seenIds.has(seed.id) && (!seed.slug || !seenIds.has(seed.slug)) && !deletedIds.has(seed.id) && (!seed.slug || !deletedIds.has(seed.slug))) {
+        // Only if seed was never explicitly deleted
+        merged.push(seed);
+        seenIds.add(seed.id);
+      }
+    });
+
+    const cleaned = merged.filter(w => !deletedIds.has(w.id) && (!w.slug || !deletedIds.has(w.slug)) && !isRemovedWork(w));
     return cleaned;
   } catch (err) {
     console.error('Failed to load works from localStorage', err);
-    return SEED_WORKS;
+    const deletedIds = getDeletedWorkIds();
+    return SEED_WORKS.filter(s => !deletedIds.has(s.id) && (!s.slug || !deletedIds.has(s.slug)) && !isRemovedWork(s));
+  }
+}
+
+export function safeSetLocalStorage(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    try {
+      // Clear legacy/cached keys to reclaim quota
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (
+          k &&
+          (k.startsWith('getnow_ch_txt_') ||
+           k.startsWith('getnow_reading_progress_v') ||
+           k.includes('_v4') ||
+           k.includes('_v5') ||
+           k.includes('_v7') ||
+           k.includes('_v8') ||
+           k.includes('_v9'))
+        ) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => {
+        try { localStorage.removeItem(k); } catch {}
+      });
+
+      localStorage.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
 export function saveStoredWorks(works: Work[]): void {
   try {
-    // 1. For each work, store heavy chapter content separately in localStorage
+    // 1. For each work, strip heavy contents, huge base64 images, and pages from localStorage copy
     const lightweightWorks = works.map(w => {
       const isSeed = SEED_WORKS.some(s => s.id === w.id);
       const lightweightChapters = (w.chapters || []).map(ch => {
         if (ch.content && ch.content.length > 500) {
           saveChapterContent(ch.id, ch.content);
         }
-        // If it's not a seed work (e.g. dynamically ingested Gutenberg work), don't embed huge text inside main catalog JSON
+        // Never store heavy manga/comic pages or huge texts inside the main catalog JSON
         return {
           ...ch,
-          content: isSeed ? ch.content : ''
+          content: isSeed ? ch.content : '',
+          pages: []
         };
       });
 
+      // Avoid storing massive base64 data URLs in localStorage (preserve them in state / server)
+      const isHeavyCover = Boolean(w.coverImage && w.coverImage.startsWith('data:') && w.coverImage.length > 40000);
+
       return {
         ...w,
+        coverImage: isHeavyCover ? '' : w.coverImage,
+        coverImageUrl: isHeavyCover ? '' : w.coverImageUrl,
         chapters: lightweightChapters
       };
     });
 
-    // 2. Save lightweight catalog to localStorage
-    try {
-      localStorage.setItem(STORAGE_KEYS.WORKS, JSON.stringify(lightweightWorks));
-    } catch (quotaError) {
-      console.warn('LocalStorage quota exceeded on main catalog, saving minimal seed catalog fallback:', quotaError);
-      // Fallback: Save only non-Gutenberg user works or seeds to avoid breaking localStorage
+    // 2. Save lightweight catalog to localStorage safely
+    const payload = JSON.stringify(lightweightWorks);
+    if (!safeSetLocalStorage(STORAGE_KEYS.WORKS, payload)) {
+      // Fallback: Save only non-Gutenberg user works or seeds to stay within quota
       const minimalWorks = lightweightWorks.filter(w => !w.id.startsWith('work-gut-'));
-      localStorage.setItem(STORAGE_KEYS.WORKS, JSON.stringify(minimalWorks));
+      if (!safeSetLocalStorage(STORAGE_KEYS.WORKS, JSON.stringify(minimalWorks))) {
+        safeSetLocalStorage(STORAGE_KEYS.WORKS, JSON.stringify(SEED_WORKS));
+      }
     }
-  } catch (err) {
-    console.error('Failed to save works to localStorage', err);
+  } catch {
+    // Graceful fallback without throwing unhandled quota error
   }
 }
 
 export function resetWorksToSeed(): Work[] {
+  clearDeletedWorks();
   saveStoredWorks(SEED_WORKS);
   saveStoredAudits(INITIAL_AUDIT_LOGS);
   return SEED_WORKS;
@@ -194,10 +320,8 @@ export function getStoredAudits(): LicenseAudit[] {
 
 export function saveStoredAudits(audits: LicenseAudit[]): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(audits));
-  } catch (err) {
-    console.error('Failed to save audit logs to localStorage', err);
-  }
+    safeSetLocalStorage(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(audits));
+  } catch {}
 }
 
 export function logLicenseAudit(audit: Omit<LicenseAudit, 'id' | 'verifiedAt'>): LicenseAudit {
@@ -232,24 +356,33 @@ export function saveProgress(progress: ReadingProgress, incognito: boolean = fal
   if (incognito) return; // Incognito toggle prevents local storage recording
   try {
     const all = getStoredProgress(userId);
+    // Sanitize progress record: avoid storing multi-megabyte data URLs in progress cache
+    const cleanCover = progress.coverImage?.startsWith('data:') && progress.coverImage.length > 2000
+      ? ''
+      : (progress.coverImage || '');
+
     all[progress.workId] = {
       ...progress,
+      coverImage: cleanCover,
       lastReadAt: new Date().toISOString()
     };
     const key = getProgressStorageKey(userId);
-    localStorage.setItem(key, JSON.stringify(all));
-  } catch (err) {
-    console.error('Failed to save reading progress', err);
-  }
+    safeSetLocalStorage(key, JSON.stringify(all));
+  } catch {}
 }
 
 export function saveAllProgress(progressMap: Record<string, ReadingProgress>, userId?: string): void {
   try {
+    const cleanMap: Record<string, ReadingProgress> = {};
+    for (const [workId, prog] of Object.entries(progressMap || {})) {
+      cleanMap[workId] = {
+        ...prog,
+        coverImage: prog.coverImage?.startsWith('data:') && prog.coverImage.length > 2000 ? '' : (prog.coverImage || '')
+      };
+    }
     const key = getProgressStorageKey(userId);
-    localStorage.setItem(key, JSON.stringify(progressMap));
-  } catch (err) {
-    console.error('Failed to save progress map', err);
-  }
+    safeSetLocalStorage(key, JSON.stringify(cleanMap));
+  } catch {}
 }
 
 export function clearStoredProgress(userId?: string): void {
