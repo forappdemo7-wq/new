@@ -17,17 +17,6 @@ const STORAGE_KEYS = {
   DELETED_USERS: 'getnow_deleted_users_v1'
 };
 
-const BANNED_WORK_IDS = new Set([
-  'work-dune',
-  'dune',
-  'work-solo-leveling',
-  'solo-leveling',
-  'work-one-piece',
-  'one-piece',
-  'work-linkout-mangaz',
-  'work-linkout-jump',
-  'work-linkout-meteor'
-]);
 
 export function getDeletedWorkIds(): Set<string> {
   try {
@@ -69,17 +58,19 @@ export function getDeletedUserIds(): Set<string> {
 export function markUserAsDeleted(userIdOrEmail: string): void {
   try {
     const deleted = getDeletedUserIds();
-    if (userIdOrEmail) deleted.add(userIdOrEmail.trim().toLowerCase());
+    if (userIdOrEmail) {
+      const clean = userIdOrEmail.trim();
+      deleted.add(clean.toLowerCase());
+      deleted.add(clean);
+    }
     safeSetLocalStorage(STORAGE_KEYS.DELETED_USERS, JSON.stringify(Array.from(deleted)));
   } catch {}
 }
 
 export function isRemovedWork(work: Work): boolean {
-  if (BANNED_WORK_IDS.has(work.id) || BANNED_WORK_IDS.has(work.slug)) return true;
+  if (!work) return true;
   const deleted = getDeletedWorkIds();
   if (deleted.has(work.id) || (work.slug && deleted.has(work.slug))) return true;
-  const titleLower = (work.title || '').toLowerCase().trim();
-  if (titleLower === 'dune' || titleLower === 'solo leveling' || titleLower === 'one piece') return true;
   return false;
 }
 

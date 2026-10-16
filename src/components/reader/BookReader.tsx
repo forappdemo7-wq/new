@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Chapter, Work, ReaderSettings } from '../../types';
 import { useRouter } from '../../context/RouterContext';
 import { useLibrary } from '../../context/LibraryContext';
-import { getChapterContent } from '../../services/storage';
+import { getChapterContent, saveChapterContent } from '../../services/storage';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { AudioNarrationPlayer } from './AudioNarrationPlayer';
 import { ReadingLabDrawer } from './ReadingLabDrawer';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -118,6 +120,72 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
   const [showAudioNarration, setShowAudioNarration] = useState(false);
   const [showReadingLab, setShowReadingLab] = useState(false);
   const [activeNarratedPara, setActiveNarratedPara] = useState<number | null>(null);
+
+  // Asynchronous chapter content state (loads from Firestore subcollection or Gutenberg mirror if not pre-hydrated)
+  const [asyncContent, setAsyncContent] = useState<string | null>(null);
+  const [isLoadingContent, setIsLoadingContent] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const initialContent = (currentChapter.content && currentChapter.content.length > 20)
+      ? currentChapter.content
+      : getChapterContent(currentChapter.id) || currentChapter.content || null;
+
+    if (initialContent) {
+      setAsyncContent(initialContent);
+      setIsLoadingContent(false);
+      return;
+    }
+
+    setIsLoadingContent(true);
+    setAsyncContent(null);
+
+    const loadAsyncChapter = async () => {
+      try {
+        if (db && work.id && currentChapter.id) {
+          const chSnap = await getDoc(doc(db, 'works', work.id, 'chapters', currentChapter.id));
+          if (!cancelled && chSnap.exists()) {
+            const data = chSnap.data() as any;
+            if (data?.content) {
+              saveChapterContent(currentChapter.id, data.content);
+              setAsyncContent(data.content);
+              setIsLoadingContent(false);
+              return;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching chapter from Firestore subcollection:', err);
+      }
+
+      // Check if this work is a Project Gutenberg book and fetch
+      const gutenbergMatch = (work.id || '').match(/(?:work-)?gutenberg-(\d+)/i) || ((work.sourceUrl || '').match(/gutenberg\.org\/ebooks\/(\d+)/i));
+      if (gutenbergMatch && gutenbergMatch[1]) {
+        try {
+          const res = await fetch(`/api/gutenberg/${gutenbergMatch[1]}`);
+          if (!cancelled && res.ok) {
+            const text = await res.text();
+            if (text && text.length > 100) {
+              saveChapterContent(currentChapter.id, text);
+              setAsyncContent(text);
+              setIsLoadingContent(false);
+              return;
+            }
+          }
+        } catch {}
+      }
+
+      if (!cancelled) {
+        setIsLoadingContent(false);
+      }
+    };
+
+    loadAsyncChapter();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [work.id, work.sourceUrl, currentChapter.id, currentChapter.content]);
 
   // Auto-hiding chrome controls state
   const [chromePinned, setChromePinned] = useState(false);
@@ -404,13 +472,32 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
 
             const rawBody = (currentChapter.content && currentChapter.content.length > 20) 
               ? currentChapter.content 
-              : getChapterContent(currentChapter.id) || currentChapter.content || '';
+              : asyncContent || getChapterContent(currentChapter.id) || currentChapter.content || '';
             
+            if (isLoadingContent && !rawBody) {
+              return (
+                <div className="py-20 flex flex-col items-center justify-center space-y-4 text-center">
+                  <div className="w-8 h-8 rounded-full border-2 border-stone-300 dark:border-stone-700 border-t-[#C25E3A] animate-spin" />
+                  <p className="text-xs font-mono uppercase tracking-widest text-stone-500">
+                    Retrieving chapter contents...
+                  </p>
+                </div>
+              );
+            }
+
             if (!rawBody) {
               return (
-                <p className="italic text-stone-500">
-                  No textual contents found for this chapter entry.
-                </p>
+                <div className="py-12 text-center space-y-3">
+                  <p className="italic text-stone-500">
+                    No textual contents found for this chapter entry.
+                  </p>
+                  <button
+                    onClick={() => navigate(`/work/${work.slug}`)}
+                    className="px-4 py-2 text-xs font-semibold rounded-lg bg-stone-800 text-white hover:bg-stone-700 transition-colors cursor-pointer"
+                  >
+                    Return to Overview
+                  </button>
+                </div>
               );
             }
 

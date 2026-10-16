@@ -129,7 +129,11 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   const handleRead = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!work.isHosted && work.externalReadUrl) {
-      window.open(work.externalReadUrl, '_blank', 'noopener,noreferrer');
+      try {
+        window.open(work.externalReadUrl, '_blank', 'noopener,noreferrer');
+      } catch {
+        window.location.href = work.externalReadUrl;
+      }
       return;
     }
     const chapterId = userProgress?.chapterId || work.chapters?.[0]?.id || '1';

@@ -686,8 +686,20 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [bannedUsers]);
 
   const getWorkBySlug = useCallback((slug: string) => {
-    const clean = (slug || '').split('#')[0].split('?')[0];
-    return works.find(w => w.slug === clean || w.slug === slug);
+    if (!slug) return undefined;
+    let clean = slug.split('#')[0].split('?')[0].trim();
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {}
+    const cleanLower = clean.toLowerCase();
+    return works.find(w => 
+      (w.slug && w.slug.toLowerCase() === cleanLower) ||
+      (w.id && w.id.toLowerCase() === cleanLower) ||
+      w.slug === clean ||
+      w.id === clean ||
+      w.slug === slug ||
+      w.id === slug
+    );
   }, [works]);
 
   const getWorkById = useCallback((id: string) => works.find(w => w.id === id), [works]);

@@ -15,10 +15,12 @@ import {
   ResumableUploadError,
 } from '../../services/resilientUploadService';
 import { compressImageToDataUrl } from '../../utils/imageOptimizer';
+import JSZip from 'jszip';
 import {
   X,
   Upload,
   BookOpen,
+  Book,
   Image as ImageIcon,
   FileText,
   FolderArchive,
@@ -574,6 +576,112 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
     }
   };
 
+  // Handle EPUB, Markdown, and Plain Text Manuscript Uploads
+  const handleTextOrEpubUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const active = currentUser || userProfile;
+    if (!active || (active as any).isAnonymous) {
+      showToast('Please sign into your reader account before uploading manuscripts.', 'warning');
+      openAuthModal('signin');
+      return;
+    }
+
+    setIsProcessingFile(true);
+    setIsRetrying(false);
+    setRetryInfo(null);
+    setUploadProgress(`Processing manuscript ${file.name}...`);
+    setUploadPercent(20);
+
+    try {
+      const fileNameLower = file.name.toLowerCase();
+      let extractedChapters: Array<{ title: string; text?: string }> = [];
+
+      if (fileNameLower.endsWith('.epub')) {
+        setUploadProgress('Extracting EPUB chapter manuscripts...');
+        setUploadPercent(40);
+        const zip = new JSZip();
+        const zipData = await zip.loadAsync(file);
+
+        const chapterFiles = Object.keys(zipData.files)
+          .filter(
+            (f) =>
+              f.match(/\.(x?html|xml|txt)$/i) &&
+              !f.includes('toc') &&
+              !f.includes('cover') &&
+              !f.includes('container') &&
+              !zipData.files[f].dir
+          )
+          .sort();
+
+        let chCount = 1;
+        for (const cf of chapterFiles) {
+          try {
+            const rawHtml = await zipData.files[cf].async('text');
+            const parser = new DOMParser();
+            const parsedDoc = parser.parseFromString(rawHtml, 'text/html');
+            const bodyText = (parsedDoc.body?.textContent || '').trim();
+            if (bodyText.length > 50) {
+              const heading = parsedDoc.querySelector('h1, h2, h3, title')?.textContent?.trim();
+              extractedChapters.push({
+                title: heading || `Chapter ${chCount}`,
+                text: bodyText,
+              });
+              chCount++;
+            }
+          } catch {}
+        }
+      } else {
+        // Plain text (.txt) or Markdown (.md)
+        setUploadProgress('Parsing text manuscript...');
+        setUploadPercent(50);
+        const rawText = await file.text();
+
+        // Detect chapter breaks if present
+        const chapterChunks = rawText.split(/(?=(?:^|\n)(?:Chapter|Section|Act|Episode|Part)\s+\d+)/i);
+        if (chapterChunks.length > 1) {
+          extractedChapters = chapterChunks
+            .map((chunk, idx) => {
+              const firstLine = chunk.trim().split('\n')[0].substring(0, 60);
+              return {
+                title: firstLine || `Chapter ${idx + 1}`,
+                text: chunk.trim(),
+              };
+            })
+            .filter((c) => c.text.length > 10);
+        } else {
+          extractedChapters = [
+            {
+              title: 'Chapter 1: Opening',
+              text: rawText.trim(),
+            },
+          ];
+        }
+      }
+
+      if (extractedChapters.length > 0) {
+        setChapters(extractedChapters);
+        if (!title) {
+          const baseName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+          setTitle(baseName.charAt(0).toUpperCase() + baseName.slice(1));
+        }
+        setUploadProgress(`Successfully loaded ${extractedChapters.length} chapter(s)!`);
+        setUploadPercent(100);
+        showToast(`Loaded ${extractedChapters.length} chapter(s) from ${file.name}!`, 'success');
+      } else {
+        showToast('No readable text content found in file.', 'warning');
+      }
+    } catch (err: any) {
+      console.error('Manuscript upload error:', err);
+      showToast(`Failed to parse file: ${err.message || 'Invalid format.'}`, 'error');
+    } finally {
+      setIsProcessingFile(false);
+      setUploadProgress('');
+      setUploadPercent(0);
+    }
+  };
+
   // Handle Multi-Image Pages Upload with Resilient Batching & Exponential Retry
   const handleImagePagesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -978,9 +1086,9 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
                     onChange={(e) => setType(e.target.value as WorkType)}
                     className="w-full px-3.5 py-2 text-sm bg-white dark:bg-[#1A1D26] border border-stone-200 dark:border-stone-700 rounded-xl focus:outline-none focus:border-[#C25E3A] text-stone-900 dark:text-stone-100"
                   >
-                    <option value="book">Book / Prose / Novella</option>
-                    <option value="comic">Comic / Graphic Novel</option>
-                    <option value="manga">Manga / Webtoon</option>
+                    <option value="book">Book / Novel / Light Novel / Prose / Anthology</option>
+                    <option value="manga">Manga / Webtoon / Manhwa / Manhua</option>
+                    <option value="comic">Comic / Graphic Novel / Illustrated Tale</option>
                   </select>
                 </div>
               </div>
@@ -1061,10 +1169,11 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
                   onChange={(e) => setLicenseCode(e.target.value)}
                   className="w-full px-3.5 py-2 text-sm bg-white dark:bg-[#1A1D26] border border-stone-200 dark:border-stone-700 rounded-xl focus:outline-none focus:border-[#C25E3A] text-stone-900 dark:text-stone-100"
                 >
-                  <option value="CC-BY">Creative Commons CC-BY (Attribution Allowed)</option>
-                  <option value="CC-BY-NC">Creative Commons CC BY-NC (Non-Commercial)</option>
-                  <option value="CC0">Public Domain Dedication (CC0)</option>
-                  <option value="COMMUNITY_OPEN">Community Open Access License</option>
+                  <option value="COMMUNITY_OPEN">Community Open Creation (Unrestricted Reading for All)</option>
+                  <option value="CC-BY">Creative Commons CC-BY (Free Distribution with Attribution)</option>
+                  <option value="CC-BY-NC">Creative Commons CC BY-NC (Non-Commercial Community Sharing)</option>
+                  <option value="CC0">Public Domain / CC0 Dedication (Universal Access)</option>
+                  <option value="AUTHOR_PERMITTED">Original Creator Permitted / Fair Use Archive</option>
                 </select>
               </div>
             </div>
@@ -1078,31 +1187,39 @@ export const PublishWorkModal: React.FC<PublishWorkModalProps> = ({ isOpen, onCl
                   <span>Upload Document / Pages</span>
                 </div>
                 <p className="text-xs text-stone-500">
-                  Upload a PDF document, EPUB, or image pages for your creation.
+                  Upload manga archives, PDF documents, EPUB manuscripts, text files, or image pages.
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
                   {/* Manga Volume Archive (.CBZ / .ZIP) */}
                   <label className="p-3.5 border-2 border-dashed border-stone-200 dark:border-stone-700 hover:border-[#C25E3A] dark:hover:border-[#C25E3A] rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors text-center bg-[#FAF8F5] dark:bg-[#12141A]">
                     <FolderArchive className="w-6 h-6 text-[#C25E3A]" />
-                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">Manga Volume (.CBZ / .ZIP)</span>
-                    <span className="text-[10px] text-stone-400">Up to 350 MB archive volume</span>
+                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">Manga / Comic Volume</span>
+                    <span className="text-[10px] text-stone-400">.CBZ / .ZIP (Up to 350 MB)</span>
                     <input type="file" accept=".cbz,.zip" onChange={handleArchiveUpload} className="hidden" />
                   </label>
 
                   {/* PDF Upload */}
                   <label className="p-3.5 border-2 border-dashed border-stone-200 dark:border-stone-700 hover:border-[#C25E3A] dark:hover:border-[#C25E3A] rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors text-center bg-[#FAF8F5] dark:bg-[#12141A]">
                     <FileText className="w-6 h-6 text-[#C25E3A]" />
-                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">Upload PDF Document</span>
-                    <span className="text-[10px] text-stone-400">Extracts book prose or pages</span>
+                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">PDF Document</span>
+                    <span className="text-[10px] text-stone-400">.PDF prose or comic scan</span>
                     <input type="file" accept=".pdf" onChange={handlePdfUpload} className="hidden" />
+                  </label>
+
+                  {/* EPUB & Text Upload */}
+                  <label className="p-3.5 border-2 border-dashed border-stone-200 dark:border-stone-700 hover:border-[#C25E3A] dark:hover:border-[#C25E3A] rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors text-center bg-[#FAF8F5] dark:bg-[#12141A]">
+                    <Book className="w-6 h-6 text-[#C25E3A]" />
+                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">EPUB &amp; Text</span>
+                    <span className="text-[10px] text-stone-400">.EPUB, .TXT, .MD manuscript</span>
+                    <input type="file" accept=".epub,.txt,.md,text/plain" onChange={handleTextOrEpubUpload} className="hidden" />
                   </label>
 
                   {/* Image Pages Upload */}
                   <label className="p-3.5 border-2 border-dashed border-stone-200 dark:border-stone-700 hover:border-[#C25E3A] dark:hover:border-[#C25E3A] rounded-xl flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors text-center bg-[#FAF8F5] dark:bg-[#12141A]">
                     <ImageIcon className="w-6 h-6 text-[#C25E3A]" />
-                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">Upload Image Pages</span>
-                    <span className="text-[10px] text-stone-400">Batch JPG, PNG, WebP pages</span>
+                    <span className="text-xs font-semibold text-stone-800 dark:text-stone-200">Image Pages</span>
+                    <span className="text-[10px] text-stone-400">Batch JPG, PNG, WebP</span>
                     <input type="file" accept="image/*" multiple onChange={handleImagePagesUpload} className="hidden" />
                   </label>
                 </div>

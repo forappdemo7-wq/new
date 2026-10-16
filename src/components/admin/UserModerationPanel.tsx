@@ -108,7 +108,7 @@ export const UserModerationPanel: React.FC = () => {
     setIsLoadingAccounts(true);
     try {
       const list = await getAllUsers();
-      if (list && list.length > 0) {
+      if (list) {
         setRegisteredAccounts(list);
       }
     } catch (err) {

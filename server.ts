@@ -10,6 +10,7 @@ import helmet from 'helmet';
 import { geminiApiRouter } from './server/routes/geminiApi';
 import { coverApiRouter } from './server/routes/coverApi';
 import { mediaApiRouter } from './server/routes/mediaApi';
+import { adminAuthApiRouter } from './server/routes/adminAuthApi';
 import { getStorageOverview } from './server/services/storageService';
 
 dotenv.config();
@@ -115,6 +116,7 @@ async function startServer() {
   app.use('/api/covers', coverApiRouter);
   app.use('/api/gemini', geminiApiRouter);
   app.use('/api/media', mediaApiRouter);
+  app.use('/api/admin', adminAuthApiRouter);
 
   // Vite middleware (Dev) or Static files (Prod)
   if (process.env.NODE_ENV !== 'production') {

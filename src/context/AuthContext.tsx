@@ -21,7 +21,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { UserProfile } from '../types';
-import { clearStoredProgress, getStoredBannedUsers, markUserAsDeleted, getStoredWorks, saveStoredWorks } from '../services/storage';
+import { clearStoredProgress, getStoredBannedUsers, markUserAsDeleted, getDeletedUserIds, getStoredWorks, saveStoredWorks } from '../services/storage';
 
 export const PRESET_AVATARS = [
   { id: 'scholar', label: 'Archival Scholar', url: 'https://api.dicebear.com/7.x/bottts/svg?seed=scholar&backgroundColor=b6e3f4' },
@@ -189,6 +189,8 @@ export async function getAccountFromFirestore(email: string): Promise<SavedUserA
  */
 export function getAllStoredAccounts(): SavedUserAccount[] {
   const map = new Map<string, SavedUserAccount>();
+  const deletedUserIds = getDeletedUserIds();
+
   for (const key of ACCOUNT_STORAGE_KEYS) {
     const stored = localStorage.getItem(key);
     if (stored) {
@@ -197,7 +199,12 @@ export function getAllStoredAccounts(): SavedUserAccount[] {
         if (Array.isArray(accounts)) {
           for (const a of accounts) {
             const email = (a?.email || a?.profile?.email || '').trim().toLowerCase();
-            if (email && !map.has(email)) {
+            const uid = a?.uid || a?.profile?.uid || '';
+            if (!email) continue;
+            if (deletedUserIds.has(email) || (uid && deletedUserIds.has(uid))) {
+              continue;
+            }
+            if (!map.has(email)) {
               const sanitizedProf = sanitizeProfile(a.profile || {
                 uid: a.uid || `user-${email.replace(/[^a-z0-9]/g, '-')}`,
                 displayName: email === 'first@user.com' ? 'first_user' : (a.displayName || email.split('@')[0]),
@@ -221,13 +228,14 @@ export function getAllStoredAccounts(): SavedUserAccount[] {
     }
   }
 
-  // Also include active profile if cached
+  // Also include active profile if cached (unless marked deleted)
   const activeProfStr = localStorage.getItem('getnow_active_user_profile_v3');
   if (activeProfStr) {
     try {
       const prof = JSON.parse(activeProfStr);
       const email = (prof?.email || '').trim().toLowerCase();
-      if (email && !map.has(email)) {
+      const uid = prof?.uid || '';
+      if (email && !deletedUserIds.has(email) && !(uid && deletedUserIds.has(uid)) && !map.has(email)) {
         const sanitizedProf = sanitizeProfile(prof, email);
         map.set(email, {
           email,
@@ -246,8 +254,15 @@ export function getAllStoredAccounts(): SavedUserAccount[] {
  */
 export async function getAllAccountsAsync(): Promise<SavedUserAccount[]> {
   const localList = getAllStoredAccounts();
+  const deletedUserIds = getDeletedUserIds();
   const map = new Map<string, SavedUserAccount>();
-  localList.forEach(a => map.set(a.email.toLowerCase(), a));
+  localList.forEach(a => {
+    const email = a.email.toLowerCase();
+    const uid = a.profile?.uid || '';
+    if (!deletedUserIds.has(email) && !(uid && deletedUserIds.has(uid))) {
+      map.set(email, a);
+    }
+  });
 
   if (db) {
     try {
@@ -256,6 +271,10 @@ export async function getAllAccountsAsync(): Promise<SavedUserAccount[]> {
         const data = d.data() as SavedUserAccount;
         if (data && data.email) {
           const email = data.email.trim().toLowerCase();
+          const uid = data.profile?.uid || d.id;
+          if (deletedUserIds.has(email) || (uid && deletedUserIds.has(uid)) || deletedUserIds.has(d.id)) {
+            return;
+          }
           const existing = map.get(email);
           const rawProf = data.profile || existing?.profile || {
             uid: d.id,
@@ -285,6 +304,10 @@ export async function getAllAccountsAsync(): Promise<SavedUserAccount[]> {
         const u = d.data() as UserProfile;
         if (u && u.email) {
           const email = u.email.trim().toLowerCase();
+          const uid = u.uid || d.id;
+          if (deletedUserIds.has(email) || (uid && deletedUserIds.has(uid)) || deletedUserIds.has(d.id)) {
+            return;
+          }
           const sanitizedProf = sanitizeProfile(u, email);
           if (!map.has(email)) {
             map.set(email, {
@@ -306,7 +329,30 @@ export async function getAllAccountsAsync(): Promise<SavedUserAccount[]> {
   return Array.from(map.values());
 }
 
-export const ADMIN_MASTER_PASSWORD = 'password_27_27';
+// Cryptographic SHA-256 hash of the default administrator credential.
+// Plaintext passwords are NEVER stored in source code or database records.
+export const ADMIN_MASTER_PASSWORD_HASH = '3ad044e69394de02261615682ba37757ff5033c0ec067634849da0896f631c60';
+
+/**
+ * Computes SHA-256 hexadecimal hash using Web Crypto API
+ */
+export async function hashCredentialSha256(str: string): Promise<string> {
+  try {
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(str);
+      const buffer = await window.crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch {}
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return `hash_${Math.abs(hash)}`;
+}
 
 /**
  * Administrator function to change / reset any user's password
@@ -322,10 +368,19 @@ export async function adminChangeUserPassword(email: string, newPass: string): P
     throw new Error('New password must be at least 6 characters long.');
   }
 
-  // If changing the admin account password
-  if (cleanEmail === 'admin@getnow.org' || cleanEmail.startsWith('admin@')) {
+  const isTargetAdmin = cleanEmail === 'admin@getnow.org' || cleanEmail.startsWith('admin@');
+
+  // If changing the admin account password, store cryptographic hash and notify server
+  if (isTargetAdmin) {
     try {
-      localStorage.setItem('getnow_admin_password_override', cleanPass);
+      const hashed = await hashCredentialSha256(cleanPass);
+      localStorage.setItem('getnow_admin_password_hash', hashed);
+      localStorage.removeItem('getnow_admin_password_override');
+      fetch('/api/admin/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: cleanPass })
+      }).catch(() => {});
     } catch {}
   }
 
@@ -345,20 +400,23 @@ export async function adminChangeUserPassword(email: string, newPass: string): P
     email: cleanEmail,
     photoURL: PRESET_AVATARS[0].url,
     avatarType: 'preset',
-    role: (cleanEmail === 'admin@getnow.org' || cleanEmail.startsWith('admin@')) ? 'admin' : 'reader',
+    role: isTargetAdmin ? 'admin' : 'reader',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
 
   const profile = sanitizeProfile(rawProfile, cleanEmail);
 
+  // For admin accounts, NEVER save plaintext password in storage or Firestore
+  const storedPassValue = isTargetAdmin ? '***PROTECTED***' : cleanPass;
+
   acc = {
     email: cleanEmail,
-    pass: cleanPass,
+    pass: storedPassValue,
     profile
   };
 
-  saveRegisteredAccount(cleanEmail, cleanPass, profile);
+  saveRegisteredAccount(cleanEmail, storedPassValue, profile);
 
   if (db) {
     try {
@@ -377,24 +435,38 @@ export async function adminDeleteUser(emailOrId: string): Promise<void> {
   if (!cleanKey) return;
 
   markUserAsDeleted(cleanKey);
-  if (emailOrId) markUserAsDeleted(emailOrId);
+  if (emailOrId) markUserAsDeleted(emailOrId.trim());
 
+  // Clear active profile if it matches the deleted user
   try {
-    const works = getStoredWorks();
-    const remaining = works.filter(w => {
-      const pubEmail = (w.publisherEmail || '').trim().toLowerCase();
-      const pubId = w.publisherId || '';
-      return pubEmail !== cleanKey && pubId !== emailOrId && pubId !== cleanKey;
-    });
-    saveStoredWorks(remaining);
+    const activeProfStr = localStorage.getItem('getnow_active_user_profile_v3');
+    if (activeProfStr) {
+      const prof = JSON.parse(activeProfStr);
+      const profEmail = (prof?.email || '').trim().toLowerCase();
+      const profUid = prof?.uid || '';
+      if (profEmail === cleanKey || profUid === emailOrId || profUid === cleanKey) {
+        localStorage.removeItem('getnow_active_user_profile_v3');
+      }
+    }
   } catch {}
 
+  // Look up any matching accounts across all storage keys to find uid
+  let matchedUid = '';
   try {
     for (const key of ACCOUNT_STORAGE_KEYS) {
       const stored = localStorage.getItem(key);
       if (stored) {
         const accounts = JSON.parse(stored);
         if (Array.isArray(accounts)) {
+          const found = accounts.find((a: any) => {
+            const accEmail = (a?.email || '').trim().toLowerCase();
+            const accUid = a?.profile?.uid || a?.uid;
+            return accEmail === cleanKey || accUid === emailOrId || accUid === cleanKey;
+          });
+          if (found) {
+            matchedUid = found.profile?.uid || found.uid || '';
+            if (matchedUid) markUserAsDeleted(matchedUid);
+          }
           const filtered = accounts.filter((a: any) => {
             const accEmail = (a?.email || '').trim().toLowerCase();
             const accUid = a?.profile?.uid || a?.uid;
@@ -406,12 +478,35 @@ export async function adminDeleteUser(emailOrId: string): Promise<void> {
     }
   } catch {}
 
+  // Remove works published by this user
+  try {
+    const works = getStoredWorks();
+    const remaining = works.filter(w => {
+      const pubEmail = (w.publisherEmail || '').trim().toLowerCase();
+      const pubId = w.publisherId || '';
+      return pubEmail !== cleanKey && pubId !== emailOrId && pubId !== cleanKey && (matchedUid ? pubId !== matchedUid : true);
+    });
+    saveStoredWorks(remaining);
+  } catch {}
+
+  // Delete records from Firestore
   if (db) {
     try {
       await deleteDoc(doc(db, 'accounts', cleanKey));
     } catch {}
+    if (matchedUid) {
+      try {
+        await deleteDoc(doc(db, 'users', matchedUid));
+      } catch {}
+      try {
+        await deleteDoc(doc(db, 'accounts', matchedUid));
+      } catch {}
+    }
     try {
       await deleteDoc(doc(db, 'users', emailOrId));
+    } catch {}
+    try {
+      await deleteDoc(doc(db, 'users', cleanKey));
     } catch {}
   }
 }
@@ -1119,10 +1214,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error(`Access Denied: "${adminId}" is not recognized as an Administrator ID.`);
     }
 
-    // ── 2. STRICT PASSWORD ENFORCEMENT: Strictly require password_27_27 ──
-    const customAdminPass = localStorage.getItem('getnow_admin_password_override');
-    const expectedPass = customAdminPass || ADMIN_MASTER_PASSWORD;
-    if (cleanPass !== expectedPass && cleanPass !== ADMIN_MASTER_PASSWORD) {
+    // ── 2. SECURE PASSWORD ENFORCEMENT: Server-side check + Cryptographic SHA-256 ──
+    let isAuthorized = false;
+
+    // A. Attempt secure server-side verification first
+    try {
+      const verifyRes = await fetch('/api/admin/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId: cleanId, password: cleanPass })
+      });
+
+      if (verifyRes.ok) {
+        const json = await verifyRes.json();
+        if (json?.success) {
+          isAuthorized = true;
+        }
+      } else if (verifyRes.status === 401 || verifyRes.status === 403) {
+        const errJson = await verifyRes.json().catch(() => null);
+        throw new Error(errJson?.error || 'Access Denied: Incorrect Administrator Password.');
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('Access Denied')) {
+        throw err;
+      }
+      // If server route is unreachable (offline/client fallback), proceed to client-side cryptographic hash check
+    }
+
+    // B. Fallback client-side cryptographic hash verification
+    if (!isAuthorized) {
+      const inputHash = await hashCredentialSha256(cleanPass);
+      const customAdminHash = localStorage.getItem('getnow_admin_password_hash');
+      const legacyOverride = localStorage.getItem('getnow_admin_password_override');
+
+      if (customAdminHash) {
+        if (inputHash === customAdminHash) {
+          isAuthorized = true;
+        }
+      } else if (legacyOverride) {
+        // Upgrade legacy override to cryptographic hash
+        if (cleanPass === legacyOverride) {
+          isAuthorized = true;
+          localStorage.setItem('getnow_admin_password_hash', inputHash);
+          localStorage.removeItem('getnow_admin_password_override');
+        }
+      } else if (inputHash === ADMIN_MASTER_PASSWORD_HASH) {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
       throw new Error('Access Denied: Incorrect Administrator Password.');
     }
 
@@ -1157,13 +1298,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sessionStorage.setItem('getnow_admin_profile', JSON.stringify(adminProf));
     } catch {}
 
-    // Save admin account in registered accounts with designated admin password
-    saveRegisteredAccount(adminEmail, ADMIN_MASTER_PASSWORD, adminProf);
+    // Save admin account in registered accounts with protected placeholder (NEVER expose secret in DB or storage)
+    saveRegisteredAccount(adminEmail, '***PROTECTED***', adminProf);
     if (db) {
       try {
         await setDoc(doc(db, 'accounts', adminEmail), {
           email: adminEmail,
-          pass: ADMIN_MASTER_PASSWORD,
+          pass: '***PROTECTED***',
           profile: adminProf
         }, { merge: true });
       } catch {}
