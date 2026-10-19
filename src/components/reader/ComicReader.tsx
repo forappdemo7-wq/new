@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Chapter, ComicPage, Work, ReadingDirection } from '../../types';
 import { useRouter } from '../../context/RouterContext';
 import { useLibrary } from '../../context/LibraryContext';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -30,7 +32,45 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
   const { navigate } = useRouter();
   const { readerSettings, updateSettings, saveReadingProgress } = useLibrary();
 
-  const pages: ComicPage[] = currentChapter.pages || [];
+  // Asynchronous page fetching for chapters stored in subcollections (prevents 1MB document limit)
+  const [asyncPages, setAsyncPages] = useState<ComicPage[] | null>(null);
+  const [isLoadingPages, setIsLoadingPages] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (currentChapter.pages && currentChapter.pages.length > 0) {
+      setAsyncPages(null);
+      setIsLoadingPages(false);
+      return;
+    }
+
+    if (!db || !work.id || !currentChapter.id) return;
+
+    setIsLoadingPages(true);
+    getDoc(doc(db, 'works', work.id, 'chapters', currentChapter.id))
+      .then((snap) => {
+        if (!cancelled && snap.exists()) {
+          const data = snap.data() as any;
+          if (Array.isArray(data?.pages) && data.pages.length > 0) {
+            setAsyncPages(data.pages);
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not fetch chapter pages from Firestore subcollection:', err);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingPages(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [work.id, currentChapter.id, currentChapter.pages]);
+
+  const pages: ComicPage[] = (currentChapter.pages && currentChapter.pages.length > 0)
+    ? currentChapter.pages
+    : (asyncPages || []);
   const totalPages = pages.length > 0 ? pages.length : 1;
 
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
@@ -373,6 +413,13 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
                 </button>
               </div>
             </div>
+          ) : isLoadingPages && pages.length === 0 ? (
+            <div className="aspect-[3/4] w-full flex flex-col items-center justify-center p-8 text-center bg-white dark:bg-stone-900 text-stone-800 dark:text-stone-200 space-y-4">
+              <div className="w-8 h-8 rounded-full border-2 border-stone-300 dark:border-stone-700 border-t-[#C25E3A] animate-spin" />
+              <div className="text-xs font-mono uppercase tracking-widest text-stone-500">
+                Retrieving manga panels...
+              </div>
+            </div>
           ) : currentPage?.svgArt ? (
             <div
               dangerouslySetInnerHTML={{ __html: currentPage.svgArt }}
@@ -413,73 +460,87 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
       {/* ── Slide-Over Table of Contents Drawer ─────────────────────── */}
       <AnimatePresence>
         {showChapterDrawer && (
-          <motion.div
-            initial={{ opacity: 0, x: -300 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -300 }}
-            className="fixed inset-y-0 left-0 z-50 w-80 sm:w-96 bg-white dark:bg-[#121824] border-r border-stone-200 dark:border-slate-800 shadow-2xl p-6 flex flex-col space-y-4 overflow-y-auto"
-          >
-            <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-slate-800">
-              <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-amber-700 dark:text-amber-400 font-semibold">
-                <List className="w-4 h-4" />
-                <span>Table of Contents</span>
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowChapterDrawer(false)}
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs cursor-pointer"
+            />
+            <motion.div
+              initial={{ opacity: 0, x: -300 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -300 }}
+              className="fixed inset-y-0 left-0 z-50 w-80 sm:w-96 bg-white dark:bg-[#121824] border-r border-stone-200 dark:border-slate-800 shadow-2xl p-6 flex flex-col space-y-4 overflow-y-auto"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-slate-800">
+                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-amber-700 dark:text-amber-400 font-semibold">
+                  <List className="w-4 h-4" />
+                  <span>Table of Contents</span>
+                </div>
+                <button
+                  onClick={() => setShowChapterDrawer(false)}
+                  className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
-              <button
-                onClick={() => setShowChapterDrawer(false)}
-                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            <div className="space-y-1.5 flex-1 overflow-y-auto">
-              {allChapters.map((ch, idx) => {
-                const isActive = ch.id === currentChapter.id;
-                return (
-                  <button
-                    key={ch.id}
-                    onClick={() => {
-                      navigate(`/read/${work.id}/${ch.id}`);
-                      setShowChapterDrawer(false);
-                    }}
-                    className={`w-full text-left p-3 rounded-xl text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                      isActive
-                        ? 'bg-amber-500/10 text-amber-900 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800/60'
-                        : 'text-stone-700 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-800/80 border border-transparent'
-                    }`}
-                  >
-                    <div className="space-y-0.5 min-w-0 pr-2">
-                      <div className="font-mono text-[10px] text-stone-400 uppercase tracking-wider">
-                        Chapter {ch.chapterNumber || ch.number || idx + 1}
+              <div className="space-y-1.5 flex-1 overflow-y-auto">
+                {allChapters.map((ch, idx) => {
+                  const isActive = ch.id === currentChapter.id;
+                  return (
+                    <button
+                      key={ch.id}
+                      onClick={() => {
+                        navigate(`/read/${work.id}/${ch.id}`);
+                        setShowChapterDrawer(false);
+                      }}
+                      className={`w-full text-left p-3 rounded-xl text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-amber-500/10 text-amber-900 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800/60'
+                          : 'text-stone-700 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-800/80 border border-transparent'
+                      }`}
+                    >
+                      <div className="space-y-0.5 min-w-0 pr-2">
+                        <div className="font-mono text-[10px] text-stone-400 uppercase tracking-wider">
+                          Chapter {ch.chapterNumber || ch.number || idx + 1}
+                        </div>
+                        <div className="font-serif text-sm truncate">
+                          {ch.title || `Chapter ${idx + 1}`}
+                        </div>
                       </div>
-                      <div className="font-serif text-sm truncate">
-                        {ch.title || `Chapter ${idx + 1}`}
-                      </div>
-                    </div>
-                    {isActive ? (
-                      <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                    ) : (
-                      <span className="text-[10px] font-mono text-stone-400 shrink-0">
-                        {ch.pagesCount || ch.pages?.length || 1}p
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
+                      {isActive ? (
+                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                      ) : (
+                        <span className="text-[10px] font-mono text-stone-400 shrink-0">
+                          {ch.pagesCount || ch.pages?.length || 1}p
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
 
       {/* ── Slide-Over Reader Settings Drawer ───────────────────────── */}
       <AnimatePresence>
         {showSettings && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            className="fixed right-4 sm:right-8 top-20 z-50 w-80 sm:w-88 bg-white dark:bg-[#1A1918] rounded-xl border border-stone-200 dark:border-stone-800 shadow-2xl p-6 space-y-6"
-          >
+          <>
+            <div
+              onClick={() => setShowSettings(false)}
+              className="fixed inset-0 z-40 bg-black/20 backdrop-blur-2xs cursor-pointer"
+            />
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="fixed right-4 sm:right-8 top-20 z-50 w-80 sm:w-88 bg-white dark:bg-[#1A1918] rounded-xl border border-stone-200 dark:border-stone-800 shadow-2xl p-6 space-y-6"
+            >
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-stone-100 dark:border-stone-800">
               <h2 className="font-sans font-bold text-base text-[#1A1A1A] dark:text-[#F5F3EF]">
@@ -644,7 +705,8 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
             </div>
 
           </motion.div>
-        )}
+        </>
+      )}
       </AnimatePresence>
 
     </div>

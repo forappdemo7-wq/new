@@ -224,10 +224,10 @@ export const UserModerationPanel: React.FC = () => {
       const q = searchQuery.trim().toLowerCase();
       const matchesSearch =
         q === '' ||
-        user.name.toLowerCase().includes(q) ||
-        user.email.toLowerCase().includes(q) ||
-        user.id.toLowerCase().includes(q) ||
-        user.works.some((w) => w.title.toLowerCase().includes(q));
+        Boolean(user.name && user.name.toLowerCase().includes(q)) ||
+        Boolean(user.email && user.email.toLowerCase().includes(q)) ||
+        Boolean(user.id && user.id.toLowerCase().includes(q)) ||
+        Boolean(user.works?.some((w) => w?.title && w.title.toLowerCase().includes(q)));
 
       if (!matchesSearch) return false;
 

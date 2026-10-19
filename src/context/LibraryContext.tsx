@@ -201,104 +201,111 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const unsubWorks = onSnapshot(
       collection(db, pathWorks),
       (snapshot) => {
-        if (!snapshot.empty) {
-          const remoteUpdates = new Map<string, any>();
-          const remoteWorksList: Work[] = [];
+        if (snapshot.empty) return;
 
-          snapshot.forEach((docSnap) => {
-            const data = docSnap.data() as any;
-            if (!data) return;
-            const docId = docSnap.id;
+        const changes = snapshot.docChanges();
+        if (changes.length === 0) return;
+
+        const modifiedMap = new Map<string, any>();
+        const addedList: Work[] = [];
+        const removedIds = new Set<string>();
+
+        changes.forEach((change) => {
+          const docSnap = change.doc;
+          const data = docSnap.data() as any;
+          const docId = docSnap.id;
+          if (change.type === 'removed') {
+            removedIds.add(docId);
+            if (data?.id) removedIds.add(data.id);
+            if (data?.slug) removedIds.add(data.slug.toLowerCase());
+          } else {
             const fullItem: Work = {
               ...data,
-              id: data.id || docId,
+              id: data?.id || docId,
             };
-            remoteUpdates.set(docId, fullItem);
-            if (fullItem.id) {
-              remoteUpdates.set(fullItem.id, fullItem);
+            modifiedMap.set(docId, fullItem);
+            if (fullItem.id) modifiedMap.set(fullItem.id, fullItem);
+            if (fullItem.slug) modifiedMap.set(fullItem.slug.toLowerCase(), fullItem);
+            if (change.type === 'added' && fullItem.title && fullItem.slug) {
+              addedList.push(fullItem);
             }
-            if (data.slug) {
-              remoteUpdates.set(data.slug.toLowerCase(), fullItem);
-            }
-            if (data.title && data.slug) {
-              remoteWorksList.push(fullItem);
-            }
-          });
+          }
+        });
 
-          setWorks((prev) => {
-            let hadEngagementChange = false;
-            const deletedIds = getDeletedWorkIds();
+        setWorks((prev) => {
+          let hadEngagementChange = false;
+          const deletedIds = getDeletedWorkIds();
 
-            const next = prev
-              .filter((w) => !deletedIds.has(w.id) && (!w.slug || !deletedIds.has(w.slug)))
-              .map((w) => {
-                const remote =
-                  remoteUpdates.get(w.id) ||
-                  (w.slug ? remoteUpdates.get(w.slug.toLowerCase()) : undefined);
+          // Process modifications and removals in a single linear pass
+          const next = prev
+            .filter((w) => !deletedIds.has(w.id) && (!w.slug || !deletedIds.has(w.slug)) && !removedIds.has(w.id) && (!w.slug || !removedIds.has(w.slug.toLowerCase())))
+            .map((w) => {
+              const remote =
+                modifiedMap.get(w.id) ||
+                (w.slug ? modifiedMap.get(w.slug.toLowerCase()) : undefined);
 
-                if (remote) {
-                  const newLikes =
-                    typeof remote.likesCount === 'number'
-                      ? Math.max(0, remote.likesCount)
-                      : w.likesCount;
-                  const newComments =
-                    typeof remote.commentsCount === 'number'
-                      ? Math.max(0, remote.commentsCount)
-                      : w.commentsCount;
+              if (remote) {
+                const newLikes =
+                  typeof remote.likesCount === 'number'
+                    ? Math.max(0, remote.likesCount)
+                    : w.likesCount;
+                const newComments =
+                  typeof remote.commentsCount === 'number'
+                    ? Math.max(0, remote.commentsCount)
+                    : w.commentsCount;
 
-                  if (newLikes !== w.likesCount || newComments !== w.commentsCount) {
-                    hadEngagementChange = true;
-                  }
-
-                  const hasFullInfo = Boolean(remote.title && remote.slug);
-
-                  return {
-                    ...w,
-                    ...(hasFullInfo ? remote : {}),
-                    // Keep full chapter contents if local was hydrated
-                    chapters:
-                      w.chapters && w.chapters.length > 0
-                        ? w.chapters.map((ch, idx) => ({
-                            ...ch,
-                            ...(remote.chapters?.[idx] || {}),
-                            content: ch.content || remote.chapters?.[idx]?.content || '',
-                          }))
-                        : remote.chapters || w.chapters,
-                    likesCount: newLikes,
-                    commentsCount: newComments,
-                  };
+                if (newLikes !== w.likesCount || newComments !== w.commentsCount) {
+                  hadEngagementChange = true;
                 }
-                return w;
-              });
 
-            // Also append any new works created on another device that aren't yet in prev and not deleted
-            remoteWorksList.forEach((rw) => {
-              if (deletedIds.has(rw.id) || (rw.slug && deletedIds.has(rw.slug))) {
-                return;
+                const hasFullInfo = Boolean(remote.title && remote.slug);
+
+                return {
+                  ...w,
+                  ...(hasFullInfo ? remote : {}),
+                  // Keep full chapter contents if local was hydrated
+                  chapters:
+                    w.chapters && w.chapters.length > 0
+                      ? w.chapters.map((ch, idx) => ({
+                          ...ch,
+                          ...(remote.chapters?.[idx] || {}),
+                          content: ch.content || remote.chapters?.[idx]?.content || '',
+                        }))
+                      : remote.chapters || w.chapters,
+                  likesCount: newLikes,
+                  commentsCount: newComments,
+                };
               }
-              if (
-                !next.some(
-                  (w) =>
-                    w.id === rw.id ||
-                    (w.slug && rw.slug && w.slug.toLowerCase() === rw.slug.toLowerCase())
-                )
-              ) {
-                next.unshift(rw);
-                hadEngagementChange = true;
-              }
+              return w;
             });
 
-            saveStoredWorks(next);
-
-            if (hadEngagementChange) {
-              try {
-                window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
-              } catch {}
+          // Append newly added items from remote that are not in next
+          addedList.forEach((rw) => {
+            if (deletedIds.has(rw.id) || (rw.slug && deletedIds.has(rw.slug))) {
+              return;
             }
-
-            return next;
+            if (
+              !next.some(
+                (w) =>
+                  w.id === rw.id ||
+                  (w.slug && rw.slug && w.slug.toLowerCase() === rw.slug.toLowerCase())
+              )
+            ) {
+              next.unshift(rw);
+              hadEngagementChange = true;
+            }
           });
-        }
+
+          saveStoredWorks(next);
+
+          if (hadEngagementChange) {
+            try {
+              window.dispatchEvent(new CustomEvent('getnow:comments-updated'));
+            } catch {}
+          }
+
+          return next;
+        });
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, pathWorks);

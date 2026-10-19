@@ -95,14 +95,14 @@ export const UserUploadsPage: React.FC = () => {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const titleMatch = w.title.toLowerCase().includes(q);
-        const authorMatch = w.authors?.some((a) => a.name.toLowerCase().includes(q));
-        const genreMatch = w.genres?.some((g) => g.toLowerCase().includes(q));
+        const titleMatch = Boolean(w.title && w.title.toLowerCase().includes(q));
+        const authorMatch = w.authors?.some((a) => a?.name && a.name.toLowerCase().includes(q));
+        const genreMatch = w.genres?.some((g) => g && g.toLowerCase().includes(q));
         const publisherMatch =
           Boolean(w.publisherName && w.publisherName.toLowerCase().includes(q)) ||
           Boolean(w.publisherEmail && w.publisherEmail.toLowerCase().includes(q)) ||
           Boolean(w.uploaderId && w.uploaderId.toLowerCase().includes(q));
-        return titleMatch || authorMatch || genreMatch || publisherMatch;
+        return Boolean(titleMatch || authorMatch || genreMatch || publisherMatch);
       }
 
       return true;

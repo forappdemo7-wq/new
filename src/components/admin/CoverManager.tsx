@@ -84,9 +84,10 @@ export const CoverManager: React.FC = () => {
   // Filtered list of works
   const filteredWorks = useMemo(() => {
     return works.filter((w) => {
+      if (!w) return false;
       const matchSearch =
-        w.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        w.authors.some((a) => a.name.toLowerCase().includes(searchQuery.toLowerCase()));
+        Boolean(w.title && w.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        Boolean(w.authors?.some((a) => a?.name && a.name.toLowerCase().includes(searchQuery.toLowerCase())));
 
       if (!matchSearch) return false;
 

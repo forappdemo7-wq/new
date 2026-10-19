@@ -3,7 +3,7 @@ import { useRouter } from '../../context/RouterContext';
 import { ArrowRight } from 'lucide-react';
 import heroLibraryBg from '../../assets/images/hero_candlelit_library_1790844657495.jpg';
 import comicScifiBg from '../../assets/images/comic_scifi_odyssey_1790759577653.jpg';
-import mangaHokusaiBg from '../../assets/images/manga_hokusai_woodblock_1790760941217.jpg';
+import mangaHokusaiBg from '../../assets/images/collection_scifi_fantasy_1791353561476.jpg';
 
 export const CategoryBanners: React.FC = () => {
   const { navigate } = useRouter();

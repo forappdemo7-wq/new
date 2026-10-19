@@ -6,14 +6,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 // Hero Assets
 import warOfWorldsBannerImg from '../../assets/images/war_of_worlds_banner_1791280492280.jpg';
-import warOfWorldsCoverImg from '../../assets/images/war_of_worlds_cover_1790849513563.jpg';
+import warOfWorldsCoverImg from '../../assets/images/collection_scifi_fantasy_1791353561476.jpg';
 import frankensteinCoverImg from '../../assets/images/book_frankenstein_cover_1790759531684.jpg';
-import draculaCoverImg from '../../assets/images/dracula_gothic_cover_1790849425104.jpg';
+import draculaCoverImg from '../../assets/images/sherlock_detective_cover_1790849444735.jpg';
 import sherlockCoverImg from '../../assets/images/sherlock_detective_cover_1790849444735.jpg';
 import nineteen84CoverImg from '../../assets/images/nineteen84_distopian_cover_1790850382066.jpg';
-import prideCoverImg from '../../assets/images/pride_prejudice_regency_cover_1790850423526.jpg';
+import prideCoverImg from '../../assets/images/great_gatsby_vintage_cover_1790850405905.jpg';
 import libraryBannerImg from '../../assets/images/hero_candlelit_library_1790844657495.jpg';
-import readingBannerImg from '../../assets/images/hero_reading_library_1790759505431.jpg';
+import readingBannerImg from '../../assets/images/hero_candlelit_library_1790844657495.jpg';
 
 interface FeaturedSlide {
   id: string;

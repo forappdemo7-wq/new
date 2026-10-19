@@ -11,6 +11,7 @@ import {
   onSnapshot,
   query,
   orderBy,
+  limit,
   increment
 } from 'firebase/firestore';
 import { Work, WorkLike, WorkComment, LibraryNotification } from '../types';
@@ -443,9 +444,9 @@ export function subscribeWorkLikes(
     };
   }
 
-  const likesCol = collection(db, 'works', workId, 'likes');
+  const likesQuery = query(collection(db, 'works', workId, 'likes'), limit(250));
   const unsub = onSnapshot(
-    likesCol,
+    likesQuery,
     (snapshot) => {
       const remoteLikes: WorkLike[] = [];
       snapshot.forEach((d) => {
@@ -523,11 +524,11 @@ export function getWorkMediumDescriptor(type?: string): string {
 export function extractMentions(text: string): string[] {
   if (!text) return [];
   const mentions: string[] = [];
-  // Match @username or @"Full Name" or @First Last up to punctuation or end of string
-  const regex = /@([a-zA-Z0-9_\-\.]{2,30}(?:\s+[a-zA-Z0-9_\-\.]{2,30})?)/g;
+  // Match @"Full Name" or @First Last (capitalized surname) or @single_token
+  const regex = /@"([^"]{2,50})"|@([a-zA-Z0-9_\-\.]{2,30}(?:\s+[A-Z][a-zA-Z0-9_\-\.]{1,30})?)/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
-    const raw = match[1].trim();
+    const raw = (match[1] || match[2] || '').replace(/[.,!?:;]+$/, '').trim();
     if (raw && !mentions.includes(raw)) {
       mentions.push(raw);
     }
@@ -848,9 +849,9 @@ export function subscribeWorkComments(
     };
   }
 
-  const commentsCol = collection(db, 'works', workId, 'comments');
+  const commentsQuery = query(collection(db, 'works', workId, 'comments'), limit(150));
   const unsub = onSnapshot(
-    commentsCol,
+    commentsQuery,
     (snapshot) => {
       let deletedIds: string[] = [];
       try {

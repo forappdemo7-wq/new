@@ -458,16 +458,20 @@ export const WorkCommentsSection: React.FC<WorkCommentsSectionProps> = ({ work }
 
   // Helper to format text with highlighted @mentions
   const renderFormattedContent = (content: string) => {
-    const parts = content.split(/(@[a-zA-Z0-9_\-\.]{2,30}(?:\s+[a-zA-Z0-9_\-\.]{2,30})?)/g);
+    const parts = content.split(/(@"[^"]{2,50}"|@[a-zA-Z0-9_\-\.]{2,30}(?:\s+[A-Z][a-zA-Z0-9_\-\.]{1,30})?)/g);
     return parts.map((part, index) => {
       if (part.startsWith('@')) {
+        const trailingPunct = part.match(/[.,!?:;]+$/)?.[0] || '';
+        const coreMention = trailingPunct ? part.slice(0, -trailingPunct.length) : part;
         return (
-          <span
-            key={index}
-            className="inline-flex items-center font-semibold text-[#C25E3A] dark:text-[#E07A54] bg-[#C25E3A]/10 dark:bg-[#C25E3A]/20 px-1.5 py-0.5 rounded text-xs mx-0.5"
-          >
-            {part}
-          </span>
+          <React.Fragment key={index}>
+            <span
+              className="inline-flex items-center font-semibold text-[#C25E3A] dark:text-[#E07A54] bg-[#C25E3A]/10 dark:bg-[#C25E3A]/20 px-1.5 py-0.5 rounded text-xs mx-0.5"
+            >
+              {coreMention}
+            </span>
+            {trailingPunct}
+          </React.Fragment>
         );
       }
       return <span key={index}>{part}</span>;
@@ -476,7 +480,7 @@ export const WorkCommentsSection: React.FC<WorkCommentsSectionProps> = ({ work }
 
   const filteredCandidates = mentionQuery
     ? mentionCandidates.filter((u) =>
-        u.displayName.toLowerCase().includes(mentionQuery)
+        Boolean(u?.displayName && u.displayName.toLowerCase().includes(mentionQuery))
       )
     : mentionCandidates;
 

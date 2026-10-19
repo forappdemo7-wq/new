@@ -2,11 +2,15 @@ process.env.DISABLE_HMR = 'true';
 
 import express from 'express';
 import http from 'http';
+import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 import { geminiApiRouter } from './server/routes/geminiApi';
 import { coverApiRouter } from './server/routes/coverApi';
 import { mediaApiRouter } from './server/routes/mediaApi';
@@ -33,6 +37,9 @@ async function startServer() {
     })
   );
 
+  // Response compression (Gzip/Deflate) to reduce network payload by 75%+ for 10,000+ users
+  app.use(compression({ threshold: 1024 }) as any);
+
   // CORS support
   app.use(cors({
     origin: (origin, callback) => {
@@ -51,38 +58,118 @@ async function startServer() {
     credentials: true,
   }));
 
+  // Global high-throughput rate limiter for API endpoints (protects against DoS / brute-force)
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 3000, // 3,000 requests per minute per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+  });
+  app.use('/api/', apiLimiter);
+
   app.use(express.json({ limit: '15mb' }));
 
-  // Health check endpoint
+  // High-performance in-memory text cache with ETag support for Gutenberg texts
+  interface CachedTextEntry {
+    text: string;
+    cachedAt: number;
+    etag: string;
+  }
+  const textCache = new Map<string, CachedTextEntry>();
+  const MAX_TEXT_CACHE_ENTRIES = 300;
+  const TEXT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+  // Health check endpoint with system metrics
   app.get('/api/health', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.json({
       status: 'ok',
       service: 'narrative-realm-backend',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
+      memory: process.memoryUsage(),
       storage: getStorageOverview(),
     });
   });
 
-  // Project Gutenberg text proxy endpoint
+  // Load curated catalog for external consumers and OPDS feeds
+  let curatedCatalog: Array<{
+    id: string;
+    title: string;
+    slug: string;
+    author: string;
+    year: number;
+    type: string;
+    genre: string;
+    language: string;
+    description: string;
+    license: string;
+    coverUrl: string;
+    readUrl: string;
+  }> = [];
+
+  try {
+    const catalogPath = path.resolve(__dirname, 'server/data/catalog.json');
+    if (fs.existsSync(catalogPath)) {
+      curatedCatalog = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
+    }
+  } catch (err) {
+    console.warn('Could not read catalog.json:', err);
+  }
+
+  // High-performance cached catalog route
+  app.get('/api/catalog', (_req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      version: 'v1',
+      count: curatedCatalog.length,
+      works: curatedCatalog,
+    });
+  });
+
+  // Project Gutenberg text proxy endpoint with memory cache & 304 Not Modified
   app.get('/api/gutenberg/:id', async (req, res) => {
     const id = req.params.id;
+    const cacheKey = `gutenberg_${id}`;
+    const cached = textCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.cachedAt < TEXT_CACHE_TTL) {
+      if (req.headers['if-none-match'] === cached.etag) {
+        return res.status(304).end();
+      }
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('ETag', cached.etag);
+      res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400');
+      return res.send(cached.text);
+    }
+
     const urlsToTry = [
       `https://www.gutenberg.org/cache/epub/${id}/pg${id}.txt`,
       `https://www.gutenberg.org/files/${id}/${id}-0.txt`,
-      `https://www.gutenberg.org/files/${id}/${id}.txt`
+      `https://www.gutenberg.org/files/${id}/${id}.txt`,
     ];
 
     for (const url of urlsToTry) {
       try {
         const fetchRes = await fetch(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GutenbergReader/1.0)' }
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GutenbergReader/1.0)' },
         });
         if (fetchRes.ok) {
           const text = await fetchRes.text();
           if (text && text.length > 500) {
+            const etag = `W/"${crypto.createHash('md5').update(text).digest('hex')}"`;
+            if (textCache.size >= MAX_TEXT_CACHE_ENTRIES) {
+              const oldestKey = textCache.keys().next().value;
+              if (oldestKey) textCache.delete(oldestKey);
+            }
+            textCache.set(cacheKey, { text, cachedAt: Date.now(), etag });
+
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
+            res.setHeader('ETag', etag);
+            res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400');
             return res.send(text);
           }
         }
@@ -91,21 +178,130 @@ async function startServer() {
     return res.status(502).json({ error: 'Failed to fetch from Project Gutenberg mirrors' });
   });
 
-  // Generic CORS text proxy
+  // OPDS 1.2 Atom Feed & OPDS 2 JSON endpoint for e-reader integration (KOReader, Moon+, Librera, Calibre)
+  app.get(['/api/opds', '/api/opds/v1/catalog.atom', '/api/opds/v2/catalog.json'], (req, res) => {
+    const isJson = req.path.endsWith('.json') || Boolean(req.headers.accept && req.headers.accept.includes('application/opds+json'));
+    const nowIso = new Date().toISOString();
+
+    if (isJson) {
+      res.setHeader('Content-Type', 'application/opds+json; charset=utf-8');
+      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+      return res.json({
+        metadata: {
+          title: 'wanna read? Open Reading Library',
+          subtitle: 'Ad-Free Openly Licensed Books, Comics, and Manga',
+          identifier: 'urn:uuid:wannaread-library-opds-catalog',
+          updated: nowIso,
+          author: {
+            name: 'wanna read? Curatorial Collective',
+            uri: 'https://wannaread.library',
+          },
+        },
+        links: [
+          { rel: 'self', href: '/api/opds/v2/catalog.json', type: 'application/opds+json' },
+        ],
+        publications: curatedCatalog.map((item) => ({
+          metadata: {
+            '@type': 'http://schema.org/Book',
+            title: item.title,
+            identifier: `urn:wannaread:work:${item.id}`,
+            author: item.author,
+            language: item.language,
+            published: String(item.year),
+            description: item.description,
+            rights: item.license,
+          },
+          images: [
+            { href: item.coverUrl, type: 'image/jpeg' },
+          ],
+          links: [
+            { href: item.readUrl, type: 'text/html', rel: 'http://opds-spec.org/acquisition' },
+          ],
+        })),
+      });
+    }
+
+    const entriesXml = curatedCatalog
+      .map(
+        (item) => `  <entry>
+    <title>${item.title.replace(/[&<>'"]/g, '')}</title>
+    <id>urn:wannaread:work:${item.id}</id>
+    <updated>${nowIso}</updated>
+    <author>
+      <name>${item.author.replace(/[&<>'"]/g, '')}</name>
+    </author>
+    <dc:language>${item.language}</dc:language>
+    <dc:issued>${item.year}</dc:issued>
+    <summary>${item.description.replace(/[&<>'"]/g, '')}</summary>
+    <link rel="http://opds-spec.org/image" href="${item.coverUrl}" type="image/jpeg"/>
+    <link rel="http://opds-spec.org/image/thumbnail" href="${item.coverUrl}" type="image/jpeg"/>
+    <link rel="http://opds-spec.org/acquisition" href="${item.readUrl}" type="text/html"/>
+    <category term="${item.genre}" label="${item.genre}"/>
+    <dc:rights>${item.license}</dc:rights>
+  </entry>`
+      )
+      .join('\n\n');
+
+    const opdsXml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/terms/"
+      xmlns:opds="http://opds-spec.org/2010/catalog">
+  <id>urn:uuid:wannaread-library-opds-catalog</id>
+  <title>wanna read? Open Reading Library</title>
+  <subtitle>Ad-Free Openly Licensed Books, Comics, and Manga</subtitle>
+  <updated>${nowIso}</updated>
+  <author>
+    <name>wanna read? Curatorial Collective</name>
+    <uri>https://wannaread.library</uri>
+  </author>
+  <link rel="self" href="/api/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+  <link rel="start" href="/api/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
+
+${entriesXml}
+</feed>`;
+
+    res.setHeader('Content-Type', 'application/atom+xml;profile=opds-catalog;kind=acquisition; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+    return res.send(opdsXml);
+  });
+
+  // Generic CORS text proxy with in-memory caching
   app.get('/api/proxy-text', async (req, res) => {
     const targetUrl = req.query.url as string;
     if (!targetUrl) {
       return res.status(400).json({ error: 'Missing url param' });
     }
+
+    const cacheKey = `proxy_${targetUrl}`;
+    const cached = textCache.get(cacheKey);
+    if (cached && Date.now() - cached.cachedAt < TEXT_CACHE_TTL) {
+      if (req.headers['if-none-match'] === cached.etag) {
+        return res.status(304).end();
+      }
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('ETag', cached.etag);
+      res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400');
+      return res.send(cached.text);
+    }
+
     try {
       const fetchRes = await fetch(targetUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GutenbergReader/1.0)' }
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; GutenbergReader/1.0)' },
       });
       if (!fetchRes.ok) {
         return res.status(fetchRes.status).json({ error: `Target returned ${fetchRes.statusText}` });
       }
       const text = await fetchRes.text();
+      const etag = `W/"${crypto.createHash('md5').update(text).digest('hex')}"`;
+      if (textCache.size >= MAX_TEXT_CACHE_ENTRIES) {
+        const oldestKey = textCache.keys().next().value;
+        if (oldestKey) textCache.delete(oldestKey);
+      }
+      textCache.set(cacheKey, { text, cachedAt: Date.now(), etag });
+
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('ETag', etag);
+      res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400');
       return res.send(text);
     } catch (err: any) {
       return res.status(502).json({ error: err?.message || 'Proxy error' });
@@ -125,7 +321,7 @@ async function startServer() {
       server: {
         middlewareMode: true,
         hmr: false,
-      }
+      },
     });
     app.use(vite.middlewares);
   } else {
@@ -134,6 +330,11 @@ async function startServer() {
       res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
     });
   }
+
+  // Optimize persistent socket keep-alive for 10,000+ active connections
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
+  server.maxHeadersCount = 2000;
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);

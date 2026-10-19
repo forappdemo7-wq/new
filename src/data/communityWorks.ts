@@ -240,3 +240,5 @@ I encountered my first Astral Guardian at dusk. It was no larger than a fox, but
     ],
   },
 ];
+
+export const SEED_WORKS = INITIAL_COMMUNITY_WORKS;
