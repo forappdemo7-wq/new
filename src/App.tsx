@@ -1,106 +1,162 @@
 import React from 'react';
-import { RouterProvider, useRouter } from './context/RouterContext';
-import { AuthProvider } from './context/AuthContext';
+import { RouterProvider, useRouter, matchRoute } from './context/RouterContext';
 import { LibraryProvider } from './context/LibraryContext';
-import { Navbar } from './components/layout/Navbar';
-import { Footer } from './components/layout/Footer';
-import { DuneHeroCarousel } from './components/home/DuneHeroCarousel';
-import { CategoryBanners } from './components/home/CategoryBanners';
-import { LibraryFilterBar } from './components/catalog/LibraryFilterBar';
-import { MediaCard } from './components/catalog/MediaCard';
+import { AuthProvider } from './context/AuthContext';
+import { AuthModal } from './components/auth/AuthModal';
+import { Layout } from './components/layout/Layout';
+import { HomePage } from './pages/HomePage';
+import { LibraryPage } from './pages/LibraryPage';
 import { WorkDetailPage } from './pages/WorkDetailPage';
 import { ReaderPage } from './pages/ReaderPage';
-import { UserUploadsPage } from './pages/UserUploadsPage';
-import { DownloadsPage } from './pages/DownloadsPage';
-import { AdminPage } from './pages/AdminPage';
 import { AuthorPage } from './pages/AuthorPage';
+import { GenrePage } from './pages/GenrePage';
+import { DemographicPage } from './pages/DemographicPage';
 import { LicensePage } from './pages/LicensePage';
-import { UserProfilePage } from './pages/UserProfilePage';
 import { SourcesPage } from './pages/SourcesPage';
 import { OpdsFeedPage } from './pages/OpdsFeedPage';
-import { useLibrary } from './context/LibraryContext';
+import { CollectionsPage } from './pages/CollectionsPage';
+import { StaticPages } from './pages/StaticPages';
+import { AdminPage } from './pages/AdminPage';
+import { UserUploadsPage } from './pages/UserUploadsPage';
+import { UserProfilePage } from './pages/UserProfilePage';
+import { ReadingListPage } from './pages/ReadingListPage';
+import { HistoryPage } from './pages/HistoryPage';
+import { DownloadsPage } from './pages/DownloadsPage';
 
-const MainLayout: React.FC = () => {
+const AppRoutes: React.FC = () => {
   const { path } = useRouter();
-  const { works } = useLibrary();
 
-  // Route matching
-  if (path.startsWith('/work/')) {
-    const slug = path.replace('/work/', '');
-    return <WorkDetailPage slug={slug} />;
+  // Unified Reader Route: /read/:workId/:chapterId or /read/:workId
+  const readParamsWithChap = matchRoute('/read/:workId/:chapterId', path);
+  const readParamsDirect = matchRoute('/read/:workId', path);
+  const readParams = readParamsWithChap || (readParamsDirect ? { workId: readParamsDirect.workId, chapterId: '1' } : null);
+  if (readParams) {
+    return <ReaderPage workId={readParams.workId} chapterId={readParams.chapterId || '1'} />;
   }
 
-  if (path.startsWith('/read/')) {
-    const parts = path.replace('/read/', '').split('/');
-    return <ReaderPage workId={parts[0]} chapterId={parts[1] || '1'} />;
-  }
+  // Helper to determine current page content
+  const renderContent = () => {
+    // Work Detail Routes: /work/:slug, /book/:slug, /comic/:slug, /manga/:slug
+    const workParams = matchRoute('/work/:slug', path);
+    const bookParams = matchRoute('/book/:slug', path);
+    const comicParams = matchRoute('/comic/:slug', path);
+    const mangaParams = matchRoute('/manga/:slug', path);
+    const matchedSlug =
+      workParams?.slug || bookParams?.slug || comicParams?.slug || mangaParams?.slug;
+    if (matchedSlug) {
+      return <WorkDetailPage slug={matchedSlug} />;
+    }
 
-  if (path === '/uploads') {
-    return <UserUploadsPage />;
-  }
+    // Demographic Route: /demographic/:slug
+    const demoParams = matchRoute('/demographic/:slug', path);
+    if (demoParams) {
+      return <DemographicPage slug={demoParams.slug} />;
+    }
 
-  if (path === '/downloads') {
-    return <DownloadsPage />;
-  }
+    // Author Route: /author/:slug
+    const authorParams = matchRoute('/author/:slug', path);
+    if (authorParams) {
+      return <AuthorPage slug={authorParams.slug} />;
+    }
 
-  if (path === '/admin') {
-    return <AdminPage />;
-  }
+    // Genre / Theme Route: /genre/:slug or /theme/:slug
+    const genreParams = matchRoute('/genre/:slug', path);
+    const themeParams = matchRoute('/theme/:slug', path);
+    const matchedGenreSlug = genreParams?.slug || themeParams?.slug;
+    if (matchedGenreSlug) {
+      return <GenrePage slug={matchedGenreSlug} />;
+    }
 
-  if (path.startsWith('/author/')) {
-    const slug = path.replace('/author/', '');
-    return <AuthorPage slug={slug} />;
-  }
+    // License Route: /license/:code or /licensing
+    const licenseParams = matchRoute('/license/:code', path);
+    if (licenseParams || path === '/licensing') {
+      return <LicensePage code={licenseParams ? licenseParams.code : 'overview'} />;
+    }
 
-  if (path.startsWith('/license/')) {
-    const code = path.replace('/license/', '');
-    return <LicensePage code={code} />;
-  }
+    // Sources & Blocklist Directory: /sources
+    if (path === '/sources') {
+      return <SourcesPage />;
+    }
 
-  if (path.startsWith('/profile/')) {
-    const userId = path.replace('/profile/', '');
-    return <UserProfilePage userId={userId} />;
-  }
+    // OPDS 1.2 Feed Endpoint: /opds
+    if (path === '/opds') {
+      return <OpdsFeedPage />;
+    }
 
-  if (path === '/sources') {
-    return <SourcesPage />;
-  }
+    // Collections Route
+    if (path === '/collections') {
+      return <CollectionsPage />;
+    }
 
-  if (path === '/opds') {
-    return <OpdsFeedPage />;
-  }
+    // Static Policy Pages
+    if (path === '/about') {
+      return <StaticPages page="about" />;
+    }
+    if (path === '/privacy') {
+      return <StaticPages page="privacy" />;
+    }
+    if (path === '/terms') {
+      return <StaticPages page="terms" />;
+    }
+    if (path === '/dmca' || path === '/takedown') {
+      return <StaticPages page="dmca" />;
+    }
+    if (path === '/contribute') {
+      return <StaticPages page="contribute" />;
+    }
 
-  // Home / Catalog View
+    // User Uploads Dedicated Route
+    if (path === '/user-uploads') {
+      return <UserUploadsPage />;
+    }
+
+    // Public User Profile Route: /user/:userId or /profile/:userId
+    const userParams = matchRoute('/user/:userId', path);
+    const profileParams = matchRoute('/profile/:userId', path);
+    const matchedUserId = userParams?.userId || profileParams?.userId;
+    if (matchedUserId) {
+      return <UserProfilePage userId={matchedUserId} />;
+    }
+
+    // Reading List, History, Downloads Routes
+    if (path === '/reading-list') {
+      return <ReadingListPage />;
+    }
+    if (path === '/history') {
+      return <HistoryPage />;
+    }
+    if (path === '/downloads') {
+      return <DownloadsPage />;
+    }
+
+    // Admin Route
+    if (path === '/admin') {
+      return <AdminPage />;
+    }
+
+    // Library / Catalog Route
+    if (path === '/library') {
+      return <LibraryPage />;
+    }
+
+    // Default: Home Page
+    return <HomePage />;
+  };
+
+  return <Layout>{renderContent()}</Layout>;
+};
+
+export default function App() {
   return (
-    <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#0B0D13] text-stone-900 dark:text-stone-100 flex flex-col transition-colors">
-      <Navbar />
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-10 w-full">
-        <DuneHeroCarousel />
-        <CategoryBanners />
-        <div id="catalog-section" className="space-y-6">
-          <LibraryFilterBar />
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
-            {works.map((work) => (
-              <MediaCard key={work.id} work={work} />
-            ))}
+    <RouterProvider>
+      <AuthProvider>
+        <LibraryProvider>
+          <div className="app-root min-h-screen w-full antialiased">
+            <AppRoutes />
+            <AuthModal />
           </div>
-        </div>
-      </main>
-      <Footer />
-    </div>
+        </LibraryProvider>
+      </AuthProvider>
+    </RouterProvider>
   );
-};
-
-export const App: React.FC = () => {
-  return (
-    <AuthProvider>
-      <LibraryProvider>
-        <RouterProvider>
-          <MainLayout />
-        </RouterProvider>
-      </LibraryProvider>
-    </AuthProvider>
-  );
-};
-
-export default App;
+}

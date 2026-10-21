@@ -62,16 +62,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({ isOpen, on
     if (!cleanQuery) return [];
     const q = cleanQuery;
     return works.filter((w) => {
-      if (!w) return false;
-      const titleMatch = Boolean(w.title && w.title.toLowerCase().includes(q));
-      const authorMatch = w.authors?.some((a) => a?.name && a.name.toLowerCase().includes(q));
-      const genreMatch = w.genres?.some((g) => g && g.toLowerCase().includes(q));
-      const tagMatch = w.tags?.some((t) => t && t.toLowerCase().includes(q));
+      const titleMatch = w.title.toLowerCase().includes(q);
+      const authorMatch = w.authors?.some((a) => a.name.toLowerCase().includes(q));
+      const genreMatch = w.genres?.some((g) => g.toLowerCase().includes(q));
+      const tagMatch = w.tags?.some((t) => t.toLowerCase().includes(q));
       const publisherMatch =
         Boolean(w.publisherName && w.publisherName.toLowerCase().includes(q)) ||
         Boolean(w.publisherEmail && w.publisherEmail.toLowerCase().includes(q)) ||
         Boolean(w.uploaderId && w.uploaderId.toLowerCase().includes(q));
-      return Boolean(titleMatch || authorMatch || genreMatch || tagMatch || publisherMatch);
+      return titleMatch || authorMatch || genreMatch || tagMatch || publisherMatch;
     }).slice(0, 8);
   }, [cleanQuery, works]);
 

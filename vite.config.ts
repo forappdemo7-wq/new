@@ -92,9 +92,9 @@ export default defineConfig(() => {
         includeAssets: ['favicon.ico', 'icon.svg', 'apple-touch-icon.png'],
         manifest: {
           id: '/',
-          name: 'wanna read? — Open Library for Books, Manga & Comics',
-          short_name: 'wanna read?',
-          description: 'An ad-free, privacy-first, free-to-read online library for openly licensed books, manga, and comics.',
+          name: 'get-now — Open Library',
+          short_name: 'get-now',
+          description: 'An ad-free, privacy-first, free-to-read online library for openly licensed books and comics.',
           theme_color: '#FAF8F5',
           background_color: '#FAF8F5',
           display: 'standalone',

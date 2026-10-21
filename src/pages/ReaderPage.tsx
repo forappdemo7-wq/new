@@ -32,9 +32,8 @@ export const ReaderPage: React.FC<ReaderPageProps> = ({ workId, chapterId }) => 
     );
   }
 
-  // Find chapter by id or number or slug safely
-  const chaptersList = Array.isArray(work.chapters) ? work.chapters : [];
-  const chapter = chaptersList.find((c: Chapter) => c.id === chapterId || c.slug === chapterId || String(c.number) === chapterId) || chaptersList[0];
+  // Find chapter by id or number or slug
+  const chapter = work.chapters.find((c: Chapter) => c.id === chapterId || c.slug === chapterId || String(c.number) === chapterId) || work.chapters[0];
 
   if (!chapter) {
     return (

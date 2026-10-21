@@ -101,9 +101,9 @@ mediaApiRouter.get('/files/*', (req, res) => {
  */
 mediaApiRouter.post(
   '/upload-cover',
-  verifyFirebaseToken as any,
-  uploadRateLimiter as any,
-  upload.single('cover') as any,
+  verifyFirebaseToken,
+  uploadRateLimiter,
+  upload.single('cover'),
   async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No cover file provided' });
@@ -161,9 +161,9 @@ mediaApiRouter.post(
  */
 mediaApiRouter.post(
   '/upload-pages',
-  verifyFirebaseToken as any,
-  uploadRateLimiter as any,
-  upload.array('pages', 200) as any,
+  verifyFirebaseToken,
+  uploadRateLimiter,
+  upload.array('pages', 200),
   async (req: AuthenticatedRequest, res: Response) => {
     const files = (req.files as Express.Multer.File[]) || [];
     if (files.length === 0) {
@@ -218,7 +218,7 @@ mediaApiRouter.post(
         } catch {}
       }
 
-      return res.json({ success: true, pages: pageUrls, pageUrls, total: pageUrls.length });
+      return res.json({ success: true, pageUrls, total: pageUrls.length });
     } catch (err: any) {
       console.error('Error optimizing manga pages:', err);
       return res.status(500).json({ error: 'Failed to process manga pages: ' + (err?.message || 'Internal error') });
@@ -359,9 +359,9 @@ async function processMangaArchiveDiskFile(
  */
 mediaApiRouter.post(
   '/upload-archive',
-  verifyFirebaseToken as any,
-  uploadRateLimiter as any,
-  upload.single('archive') as any,
+  verifyFirebaseToken,
+  uploadRateLimiter,
+  upload.single('archive'),
   async (req: AuthenticatedRequest, res: Response) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No archive file provided (.cbz, .zip)' });
@@ -451,9 +451,9 @@ mediaApiRouter.get(
  */
 mediaApiRouter.post(
   '/upload-chunk',
-  verifyFirebaseToken as any,
-  chunkUploadRateLimiter as any,
-  chunkUpload.single('chunk') as any,
+  verifyFirebaseToken,
+  chunkUploadRateLimiter,
+  chunkUpload.single('chunk'),
   async (req: AuthenticatedRequest, res: Response) => {
     const { uploadId, chunkIndex, totalChunks } = req.body;
     if (!uploadId || chunkIndex === undefined || totalChunks === undefined) {

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "ingest": "tsx scripts/ingest.ts",
     "clean": "rm -rf dist server.js",
-    "lint": "npx tsc --noEmit"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",
@@ -19,7 +19,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^6.1.1",
-    "compression": "^1.7.5",
+    "compression": "^1.8.2",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
@@ -42,7 +42,7 @@
     "yauzl": "^3.4.0"
   },
   "devDependencies": {
-    "@types/compression": "^1.7.5",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/multer": "^2.3.0",

@@ -195,10 +195,9 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
   const contentRef = useRef<HTMLDivElement>(null);
   const readerContainerRef = useRef<HTMLDivElement>(null);
 
-  const chaptersList = Array.isArray(work.chapters) ? work.chapters : [];
-  const currentIndex = chaptersList.findIndex((c) => c.id === currentChapter.id || c.slug === currentChapter.slug);
-  const prevChapter = currentIndex > 0 ? chaptersList[currentIndex - 1] : null;
-  const nextChapter = currentIndex >= 0 && currentIndex < chaptersList.length - 1 ? chaptersList[currentIndex + 1] : null;
+  const currentIndex = work.chapters.findIndex((c) => c.id === currentChapter.id);
+  const prevChapter = currentIndex > 0 ? work.chapters[currentIndex - 1] : null;
+  const nextChapter = currentIndex < work.chapters.length - 1 ? work.chapters[currentIndex + 1] : null;
 
   const t = THEMES[readerSettings.theme];
 
@@ -740,7 +739,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
               </div>
 
               <div className="flex-1 overflow-y-auto space-y-1 pr-1 font-sans text-xs">
-                {chaptersList.map((chap) => {
+                {work.chapters.map((chap) => {
                   const isCurrent = chap.id === currentChapter.id;
                   return (
                     <button

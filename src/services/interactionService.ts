@@ -524,11 +524,11 @@ export function getWorkMediumDescriptor(type?: string): string {
 export function extractMentions(text: string): string[] {
   if (!text) return [];
   const mentions: string[] = [];
-  // Match @"Full Name" or @First Last (capitalized surname) or @single_token
-  const regex = /@"([^"]{2,50})"|@([a-zA-Z0-9_\-\.]{2,30}(?:\s+[A-Z][a-zA-Z0-9_\-\.]{1,30})?)/g;
+  // Match @username or @"Full Name" or @First Last up to punctuation or end of string
+  const regex = /@([a-zA-Z0-9_\-\.]{2,30}(?:\s+[a-zA-Z0-9_\-\.]{2,30})?)/g;
   let match;
   while ((match = regex.exec(text)) !== null) {
-    const raw = (match[1] || match[2] || '').replace(/[.,!?:;]+$/, '').trim();
+    const raw = match[1].trim();
     if (raw && !mentions.includes(raw)) {
       mentions.push(raw);
     }

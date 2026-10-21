@@ -188,9 +188,6 @@ export async function getAccountFromFirestore(email: string): Promise<SavedUserA
  * Retrieve all accounts stored across local storage versions
  */
 export function getAllStoredAccounts(): SavedUserAccount[] {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return [];
-  }
   const map = new Map<string, SavedUserAccount>();
   const deletedUserIds = getDeletedUserIds();
 

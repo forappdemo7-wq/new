@@ -112,13 +112,13 @@ export const LibraryPage: React.FC = () => {
     } else if (queryParam.trim()) {
       const q = queryParam.toLowerCase().trim();
       result = result.filter((w: Work) => {
-        const titleMatch = Boolean(w.title && w.title.toLowerCase().includes(q));
-        const nativeMatch = Boolean(w.nativeTitle && w.nativeTitle.toLowerCase().includes(q));
-        const authorMatch = w.authors?.some((a) => a?.name && a.name.toLowerCase().includes(q)) || false;
-        const genreMatch = w.genres?.some((g) => g && g.toLowerCase().includes(q)) || false;
-        const tagMatch = w.tags?.some((t) => t && t.toLowerCase().includes(q)) || false;
-        const descMatch = Boolean(w.description && w.description.toLowerCase().includes(q));
-        const synopsisMatch = Boolean(w.synopsis && w.synopsis.toLowerCase().includes(q));
+        const titleMatch = w.title.toLowerCase().includes(q);
+        const nativeMatch = w.nativeTitle?.toLowerCase().includes(q) || false;
+        const authorMatch = w.authors?.some((a) => a.name.toLowerCase().includes(q)) || false;
+        const genreMatch = w.genres?.some((g) => g.toLowerCase().includes(q)) || false;
+        const tagMatch = w.tags?.some((t) => t.toLowerCase().includes(q)) || false;
+        const descMatch = w.description?.toLowerCase().includes(q) || false;
+        const synopsisMatch = w.synopsis?.toLowerCase().includes(q) || false;
         const publisherMatch =
           Boolean(w.publisherName && w.publisherName.toLowerCase().includes(q)) ||
           Boolean(w.publisherEmail && w.publisherEmail.toLowerCase().includes(q)) ||
@@ -165,7 +165,6 @@ export const LibraryPage: React.FC = () => {
     if (genreParam !== 'all') {
       result = result.filter((w: Work) =>
         (w.genres || []).some((g: string) => {
-          if (!g) return false;
           const cleanParam = genreParam.toLowerCase().replace(/[^a-z0-9]/g, '');
           const cleanGenre = g.toLowerCase().replace(/[^a-z0-9]/g, '');
           return cleanGenre.includes(cleanParam) || cleanParam.includes(cleanGenre);
@@ -208,7 +207,7 @@ export const LibraryPage: React.FC = () => {
     } else if (sortParam === 'newest') {
       result.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     } else if (sortParam === 'alphabetical') {
-      result.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      result.sort((a, b) => a.title.localeCompare(b.title));
     } else if (sortParam === 'oldest') {
       result.sort((a, b) => (a.originalPublicationYear || 2000) - (b.originalPublicationYear || 2000));
     } else if (sortParam === 'most_read') {

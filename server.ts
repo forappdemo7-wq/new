@@ -2,7 +2,6 @@ process.env.DISABLE_HMR = 'true';
 
 import express from 'express';
 import http from 'http';
-import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -38,7 +37,7 @@ async function startServer() {
   );
 
   // Response compression (Gzip/Deflate) to reduce network payload by 75%+ for 10,000+ users
-  app.use(compression({ threshold: 1024 }) as any);
+  app.use(compression({ threshold: 1024 }));
 
   // CORS support
   app.use(cors({
@@ -93,31 +92,6 @@ async function startServer() {
     });
   });
 
-  // Load curated catalog for external consumers and OPDS feeds
-  let curatedCatalog: Array<{
-    id: string;
-    title: string;
-    slug: string;
-    author: string;
-    year: number;
-    type: string;
-    genre: string;
-    language: string;
-    description: string;
-    license: string;
-    coverUrl: string;
-    readUrl: string;
-  }> = [];
-
-  try {
-    const catalogPath = path.resolve(__dirname, 'server/data/catalog.json');
-    if (fs.existsSync(catalogPath)) {
-      curatedCatalog = JSON.parse(fs.readFileSync(catalogPath, 'utf-8'));
-    }
-  } catch (err) {
-    console.warn('Could not read catalog.json:', err);
-  }
-
   // High-performance cached catalog route
   app.get('/api/catalog', (_req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
@@ -125,8 +99,6 @@ async function startServer() {
       status: 'ok',
       timestamp: new Date().toISOString(),
       version: 'v1',
-      count: curatedCatalog.length,
-      works: curatedCatalog,
     });
   });
 
@@ -176,93 +148,6 @@ async function startServer() {
       } catch {}
     }
     return res.status(502).json({ error: 'Failed to fetch from Project Gutenberg mirrors' });
-  });
-
-  // OPDS 1.2 Atom Feed & OPDS 2 JSON endpoint for e-reader integration (KOReader, Moon+, Librera, Calibre)
-  app.get(['/api/opds', '/api/opds/v1/catalog.atom', '/api/opds/v2/catalog.json'], (req, res) => {
-    const isJson = req.path.endsWith('.json') || Boolean(req.headers.accept && req.headers.accept.includes('application/opds+json'));
-    const nowIso = new Date().toISOString();
-
-    if (isJson) {
-      res.setHeader('Content-Type', 'application/opds+json; charset=utf-8');
-      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
-      return res.json({
-        metadata: {
-          title: 'wanna read? Open Reading Library',
-          subtitle: 'Ad-Free Openly Licensed Books, Comics, and Manga',
-          identifier: 'urn:uuid:wannaread-library-opds-catalog',
-          updated: nowIso,
-          author: {
-            name: 'wanna read? Curatorial Collective',
-            uri: 'https://wannaread.library',
-          },
-        },
-        links: [
-          { rel: 'self', href: '/api/opds/v2/catalog.json', type: 'application/opds+json' },
-        ],
-        publications: curatedCatalog.map((item) => ({
-          metadata: {
-            '@type': 'http://schema.org/Book',
-            title: item.title,
-            identifier: `urn:wannaread:work:${item.id}`,
-            author: item.author,
-            language: item.language,
-            published: String(item.year),
-            description: item.description,
-            rights: item.license,
-          },
-          images: [
-            { href: item.coverUrl, type: 'image/jpeg' },
-          ],
-          links: [
-            { href: item.readUrl, type: 'text/html', rel: 'http://opds-spec.org/acquisition' },
-          ],
-        })),
-      });
-    }
-
-    const entriesXml = curatedCatalog
-      .map(
-        (item) => `  <entry>
-    <title>${item.title.replace(/[&<>'"]/g, '')}</title>
-    <id>urn:wannaread:work:${item.id}</id>
-    <updated>${nowIso}</updated>
-    <author>
-      <name>${item.author.replace(/[&<>'"]/g, '')}</name>
-    </author>
-    <dc:language>${item.language}</dc:language>
-    <dc:issued>${item.year}</dc:issued>
-    <summary>${item.description.replace(/[&<>'"]/g, '')}</summary>
-    <link rel="http://opds-spec.org/image" href="${item.coverUrl}" type="image/jpeg"/>
-    <link rel="http://opds-spec.org/image/thumbnail" href="${item.coverUrl}" type="image/jpeg"/>
-    <link rel="http://opds-spec.org/acquisition" href="${item.readUrl}" type="text/html"/>
-    <category term="${item.genre}" label="${item.genre}"/>
-    <dc:rights>${item.license}</dc:rights>
-  </entry>`
-      )
-      .join('\n\n');
-
-    const opdsXml = `<?xml version="1.0" encoding="utf-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom"
-      xmlns:dc="http://purl.org/dc/terms/"
-      xmlns:opds="http://opds-spec.org/2010/catalog">
-  <id>urn:uuid:wannaread-library-opds-catalog</id>
-  <title>wanna read? Open Reading Library</title>
-  <subtitle>Ad-Free Openly Licensed Books, Comics, and Manga</subtitle>
-  <updated>${nowIso}</updated>
-  <author>
-    <name>wanna read? Curatorial Collective</name>
-    <uri>https://wannaread.library</uri>
-  </author>
-  <link rel="self" href="/api/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
-  <link rel="start" href="/api/opds" type="application/atom+xml;profile=opds-catalog;kind=acquisition"/>
-
-${entriesXml}
-</feed>`;
-
-    res.setHeader('Content-Type', 'application/atom+xml;profile=opds-catalog;kind=acquisition; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
-    return res.send(opdsXml);
   });
 
   // Generic CORS text proxy with in-memory caching

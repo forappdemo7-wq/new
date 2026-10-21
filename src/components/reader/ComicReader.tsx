@@ -460,87 +460,73 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
       {/* ── Slide-Over Table of Contents Drawer ─────────────────────── */}
       <AnimatePresence>
         {showChapterDrawer && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowChapterDrawer(false)}
-              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-xs cursor-pointer"
-            />
-            <motion.div
-              initial={{ opacity: 0, x: -300 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -300 }}
-              className="fixed inset-y-0 left-0 z-50 w-80 sm:w-96 bg-white dark:bg-[#121824] border-r border-stone-200 dark:border-slate-800 shadow-2xl p-6 flex flex-col space-y-4 overflow-y-auto"
-            >
-              <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-slate-800">
-                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-amber-700 dark:text-amber-400 font-semibold">
-                  <List className="w-4 h-4" />
-                  <span>Table of Contents</span>
-                </div>
-                <button
-                  onClick={() => setShowChapterDrawer(false)}
-                  className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+          <motion.div
+            initial={{ opacity: 0, x: -300 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -300 }}
+            className="fixed inset-y-0 left-0 z-50 w-80 sm:w-96 bg-white dark:bg-[#121824] border-r border-stone-200 dark:border-slate-800 shadow-2xl p-6 flex flex-col space-y-4 overflow-y-auto"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-stone-200 dark:border-slate-800">
+              <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-amber-700 dark:text-amber-400 font-semibold">
+                <List className="w-4 h-4" />
+                <span>Table of Contents</span>
               </div>
+              <button
+                onClick={() => setShowChapterDrawer(false)}
+                className="p-1 text-stone-400 hover:text-stone-700 dark:hover:text-stone-200 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-              <div className="space-y-1.5 flex-1 overflow-y-auto">
-                {allChapters.map((ch, idx) => {
-                  const isActive = ch.id === currentChapter.id;
-                  return (
-                    <button
-                      key={ch.id}
-                      onClick={() => {
-                        navigate(`/read/${work.id}/${ch.id}`);
-                        setShowChapterDrawer(false);
-                      }}
-                      className={`w-full text-left p-3 rounded-xl text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                        isActive
-                          ? 'bg-amber-500/10 text-amber-900 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800/60'
-                          : 'text-stone-700 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-800/80 border border-transparent'
-                      }`}
-                    >
-                      <div className="space-y-0.5 min-w-0 pr-2">
-                        <div className="font-mono text-[10px] text-stone-400 uppercase tracking-wider">
-                          Chapter {ch.chapterNumber || ch.number || idx + 1}
-                        </div>
-                        <div className="font-serif text-sm truncate">
-                          {ch.title || `Chapter ${idx + 1}`}
-                        </div>
+            <div className="space-y-1.5 flex-1 overflow-y-auto">
+              {allChapters.map((ch, idx) => {
+                const isActive = ch.id === currentChapter.id;
+                return (
+                  <button
+                    key={ch.id}
+                    onClick={() => {
+                      navigate(`/read/${work.id}/${ch.id}`);
+                      setShowChapterDrawer(false);
+                    }}
+                    className={`w-full text-left p-3 rounded-xl text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                      isActive
+                        ? 'bg-amber-500/10 text-amber-900 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800/60'
+                        : 'text-stone-700 dark:text-slate-300 hover:bg-stone-100 dark:hover:bg-slate-800/80 border border-transparent'
+                    }`}
+                  >
+                    <div className="space-y-0.5 min-w-0 pr-2">
+                      <div className="font-mono text-[10px] text-stone-400 uppercase tracking-wider">
+                        Chapter {ch.chapterNumber || ch.number || idx + 1}
                       </div>
-                      {isActive ? (
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                      ) : (
-                        <span className="text-[10px] font-mono text-stone-400 shrink-0">
-                          {ch.pagesCount || ch.pages?.length || 1}p
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </motion.div>
-          </>
+                      <div className="font-serif text-sm truncate">
+                        {ch.title || `Chapter ${idx + 1}`}
+                      </div>
+                    </div>
+                    {isActive ? (
+                      <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                    ) : (
+                      <span className="text-[10px] font-mono text-stone-400 shrink-0">
+                        {ch.pagesCount || ch.pages?.length || 1}p
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
       {/* ── Slide-Over Reader Settings Drawer ───────────────────────── */}
       <AnimatePresence>
         {showSettings && (
-          <>
-            <div
-              onClick={() => setShowSettings(false)}
-              className="fixed inset-0 z-40 bg-black/20 backdrop-blur-2xs cursor-pointer"
-            />
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 20 }}
-              className="fixed right-4 sm:right-8 top-20 z-50 w-80 sm:w-88 bg-white dark:bg-[#1A1918] rounded-xl border border-stone-200 dark:border-stone-800 shadow-2xl p-6 space-y-6"
-            >
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            className="fixed right-4 sm:right-8 top-20 z-50 w-80 sm:w-88 bg-white dark:bg-[#1A1918] rounded-xl border border-stone-200 dark:border-stone-800 shadow-2xl p-6 space-y-6"
+          >
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-stone-100 dark:border-stone-800">
               <h2 className="font-sans font-bold text-base text-[#1A1A1A] dark:text-[#F5F3EF]">
@@ -705,8 +691,7 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
             </div>
 
           </motion.div>
-        </>
-      )}
+        )}
       </AnimatePresence>
 
     </div>

@@ -1,47 +1,97 @@
+import { CoverLicense, CoverSource } from '../types';
+import { verifyImageUrl } from './coverService';
+
+export interface OpenLibraryFetchResult {
+  success: boolean;
+  coverUrl?: string;
+  source: CoverSource;
+  license: CoverLicense;
+  attribution: string;
+  sourceUrl?: string;
+  error?: string;
+}
+
 /**
- * OpenLibrary Client for fetching book covers and metadata.
+ * Client-side fetcher for Open Library Covers API with fallback verification
  */
-
-export async function fetchOpenLibraryCoverByISBN(isbn: string): Promise<string | null> {
-  if (!isbn) return null;
-  const cleanIsbn = isbn.replace(/[^0-9X]/gi, '').trim();
-  if (!cleanIsbn) return null;
-  
-  const url = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg?default=false`;
-  try {
-    const res = await fetch(url, { method: 'HEAD' });
-    if (res.ok) {
-      return `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-L.jpg`;
-    }
-  } catch {
-    // fallback or network error
+export async function fetchOpenLibraryCoverByISBN(
+  isbn: string,
+  size: 'S' | 'M' | 'L' = 'L',
+  workTitle?: string,
+  authorName?: string
+): Promise<OpenLibraryFetchResult> {
+  const cleanIsbn = isbn.replace(/[^0-9X]/gi, '');
+  if (!cleanIsbn) {
+    return {
+      success: false,
+      source: 'Open Library',
+      license: 'Unknown',
+      attribution: '',
+      error: 'Invalid ISBN format. Expected 10 or 13 digits.'
+    };
   }
-  return null;
+
+  const coverUrl = `https://covers.openlibrary.org/b/isbn/${cleanIsbn}-${size}.jpg?default=false`;
+  const isValid = await verifyImageUrl(coverUrl);
+
+  if (!isValid) {
+    return {
+      success: false,
+      source: 'Open Library',
+      license: 'Unknown',
+      attribution: '',
+      error: `No cover found on Open Library for ISBN ${cleanIsbn}.`
+    };
+  }
+
+  return {
+    success: true,
+    coverUrl,
+    source: 'Open Library',
+    license: 'Public Domain',
+    attribution: `Cover image for ${workTitle || 'this work'} sourced via Open Library Covers API (ISBN: ${cleanIsbn}).`,
+    sourceUrl: `https://openlibrary.org/isbn/${cleanIsbn}`
+  };
 }
 
-export async function fetchOpenLibraryCoverByOLID(olid: string): Promise<string | null> {
-  if (!olid) return null;
+/**
+ * Fetch Open Library cover by Open Library ID (OLID)
+ */
+export async function fetchOpenLibraryCoverByOLID(
+  olid: string,
+  size: 'S' | 'M' | 'L' = 'L',
+  workTitle?: string
+): Promise<OpenLibraryFetchResult> {
   const cleanOlid = olid.trim();
-  if (!cleanOlid) return null;
-
-  const url = `https://covers.openlibrary.org/b/olid/${cleanOlid}-L.jpg?default=false`;
-  try {
-    const res = await fetch(url, { method: 'HEAD' });
-    if (res.ok) {
-      return `https://covers.openlibrary.org/b/olid/${cleanOlid}-L.jpg`;
-    }
-  } catch {}
-  return null;
-}
-
-export async function searchOpenLibraryBooks(query: string): Promise<any[]> {
-  if (!query || query.trim().length < 2) return [];
-  try {
-    const res = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=10`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.docs || [];
-  } catch {
-    return [];
+  if (!cleanOlid) {
+    return {
+      success: false,
+      source: 'Open Library',
+      license: 'Unknown',
+      attribution: '',
+      error: 'Invalid OLID format.'
+    };
   }
+
+  const coverUrl = `https://covers.openlibrary.org/b/olid/${cleanOlid}-${size}.jpg?default=false`;
+  const isValid = await verifyImageUrl(coverUrl);
+
+  if (!isValid) {
+    return {
+      success: false,
+      source: 'Open Library',
+      license: 'Unknown',
+      attribution: '',
+      error: `No cover found on Open Library for OLID ${cleanOlid}.`
+    };
+  }
+
+  return {
+    success: true,
+    coverUrl,
+    source: 'Open Library',
+    license: 'Public Domain',
+    attribution: `Cover image for ${workTitle || 'this work'} sourced via Open Library Covers API (OLID: ${cleanOlid}).`,
+    sourceUrl: `https://openlibrary.org/books/${cleanOlid}`
+  };
 }
