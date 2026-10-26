@@ -387,6 +387,9 @@ export const AdminPage: React.FC = () => {
               )}
               <span>Log In to Admin Console</span>
             </button>
+            <p className="text-[11px] text-stone-400 dark:text-stone-500 text-center font-sans">
+              Curator credentials: ID <span className="font-mono text-stone-700 dark:text-stone-300">admin</span> · Password <span className="font-mono text-stone-700 dark:text-stone-300">admin123</span>
+            </p>
           </form>
 
           <div className="pt-2 border-t border-stone-200/80 dark:border-stone-800 text-center">

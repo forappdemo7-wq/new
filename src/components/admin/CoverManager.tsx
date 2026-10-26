@@ -389,7 +389,7 @@ export const CoverManager: React.FC = () => {
                       {work.title}
                     </div>
                     <div className="text-[11px] text-stone-500 font-sans truncate">
-                      {work.authors.map((a) => a.name).join(', ')}
+                      {work.authors?.map((a: any) => typeof a === 'string' ? a : a?.name || '').filter(Boolean).join(', ') || 'Unknown'}
                     </div>
                   </div>
 
@@ -423,7 +423,7 @@ export const CoverManager: React.FC = () => {
                     {selectedWork.title}
                   </h3>
                   <p className="text-xs text-stone-500 font-sans">
-                    by {selectedWork.authors.map((a) => a.name).join(', ')} · Format: {selectedWork.type.toUpperCase()}
+                    by {selectedWork.authors?.map((a: any) => typeof a === 'string' ? a : a?.name || '').filter(Boolean).join(', ') || 'Unknown'} · Format: {selectedWork.type.toUpperCase()}
                   </p>
                 </div>
 

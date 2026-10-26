@@ -352,16 +352,15 @@ export function subscribeUserFollowers(
     followersCol,
     (snapshot) => {
       const remote: FollowUserItem[] = [];
-      snapshot.forEach((d) => remote.push(d.data() as FollowUserItem));
+      snapshot.forEach((d) => {
+        const item = d.data() as FollowUserItem;
+        if (item && item.uid) {
+          remote.push(item);
+        }
+      });
 
-      const local = getLocalFollowers(userId);
-      const map = new Map<string, FollowUserItem>();
-      local.forEach((u) => map.set(u.uid, u));
-      remote.forEach((u) => map.set(u.uid, u));
-
-      const merged = Array.from(map.values());
-      saveLocalFollowers(userId, merged);
-      callback(merged);
+      saveLocalFollowers(userId, remote);
+      callback(remote);
     },
     (err) => {
       console.debug(`subscribeUserFollowers for ${userId}:`, err);
@@ -401,16 +400,15 @@ export function subscribeUserFollowing(
     followingCol,
     (snapshot) => {
       const remote: FollowUserItem[] = [];
-      snapshot.forEach((d) => remote.push(d.data() as FollowUserItem));
+      snapshot.forEach((d) => {
+        const item = d.data() as FollowUserItem;
+        if (item && item.uid) {
+          remote.push(item);
+        }
+      });
 
-      const local = getLocalFollowing(userId);
-      const map = new Map<string, FollowUserItem>();
-      local.forEach((u) => map.set(u.uid, u));
-      remote.forEach((u) => map.set(u.uid, u));
-
-      const merged = Array.from(map.values());
-      saveLocalFollowing(userId, merged);
-      callback(merged);
+      saveLocalFollowing(userId, remote);
+      callback(remote);
     },
     (err) => {
       console.debug(`subscribeUserFollowing for ${userId}:`, err);

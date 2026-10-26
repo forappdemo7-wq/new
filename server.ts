@@ -26,15 +26,32 @@ async function startServer() {
   // Trust proxy for reverse proxies in hosted container environments (Cloud Run / iFrames)
   app.set('trust proxy', 1);
   const server = http.createServer(app);
-  const PORT = Number(process.env.PORT) || 3000;
 
-  // Security headers with helmet (configured to allow loading images and scripts properly in iframe preview)
+  // Check CLI arguments for --port or default to port 3000 (strict AI Studio dev port requirement)
+  const portArgIndex = process.argv.indexOf('--port');
+  const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? Number(process.argv[portArgIndex + 1]) : null;
+  // Always use port 3000 in dev/studio container to prevent colliding with Nginx ingress on port 8080
+  const PORT = cliPort || (process.env.PORT && process.env.PORT !== '8080' ? Number(process.env.PORT) : 3000);
+
+  // Security headers with helmet (configured to allow loading inside AI Studio iframe preview)
   app.use(
     helmet({
       contentSecurityPolicy: false,
       crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false,
+      crossOriginResourcePolicy: false,
+      frameguard: false,
+      originAgentCluster: false,
     })
   );
+
+  // Remove any conflicting frame or origin blocking headers so the dev server displays cleanly in iframe
+  app.use((_req, res, next) => {
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Cross-Origin-Opener-Policy');
+    res.removeHeader('Cross-Origin-Resource-Policy');
+    next();
+  });
 
   // Response compression (Gzip/Deflate) to reduce network payload by 75%+ for 10,000+ users
   app.use(compression({ threshold: 1024 }));
@@ -221,10 +238,25 @@ async function startServer() {
   server.headersTimeout = 66000;
   server.maxHeadersCount = 2000;
 
+  server.on('error', (err: any) => {
+    console.error('Server error encountered:', err);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${PORT} is already in use.`);
+    }
+  });
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server listening on port ${PORT}`);
   });
 }
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception in server:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection in server:', reason);
+});
 
 startServer().catch((err) => {
   console.error('Fatal error starting server:', err);

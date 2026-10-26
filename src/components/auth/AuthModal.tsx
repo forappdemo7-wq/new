@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth, PRESET_AVATARS } from '../../context/AuthContext';
 import { useLibrary } from '../../context/LibraryContext';
+import { useRouter } from '../../context/RouterContext';
 import {
   X,
   User,
+  Users,
   Mail,
   Lock,
   Camera,
@@ -25,6 +27,7 @@ import {
 } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
+  const { navigate } = useRouter();
   const {
     currentUser,
     userProfile,
@@ -975,11 +978,26 @@ export const AuthModal: React.FC = () => {
           )}
         </div>
 
-        {/* Pinned Sticky Footer with Safe Sign Out */}
+        {/* Pinned Sticky Footer with Safe Sign Out & Public Profile Navigation */}
         {authModalMode === 'profile' && (currentUser || userProfile) && (
           <div className="shrink-0 p-3.5 sm:p-4 border-t border-stone-200 dark:border-slate-800 bg-stone-50 dark:bg-[#0B101D] flex items-center justify-between gap-3">
-            <div className="text-xs text-stone-500 dark:text-slate-400 truncate">
-              Signed in as <strong className="text-stone-900 dark:text-white">@{userProfile?.displayName}</strong>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const myUid = userProfile?.uid || currentUser?.uid;
+                  closeAuthModal();
+                  if (myUid) navigate(`/user/${myUid}`);
+                }}
+                className="px-3 py-1.5 bg-[#C25E3A]/10 hover:bg-[#C25E3A]/20 text-[#C25E3A] dark:text-amber-400 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                title="View your public reader and creator profile"
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>View Public Profile</span>
+              </button>
+              <div className="text-xs text-stone-500 dark:text-slate-400 truncate hidden sm:block">
+                @{userProfile?.displayName}
+              </div>
             </div>
 
             <button

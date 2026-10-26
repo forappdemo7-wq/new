@@ -19,12 +19,12 @@ export const ReaderPage: React.FC<ReaderPageProps> = ({ workId, chapterId }) => 
 
   if (!work) {
     return (
-      <div className="min-h-screen bg-[#FBF9F5] text-stone-900 flex flex-col items-center justify-center p-6 text-center transition-colors">
+      <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#12141A] text-stone-900 dark:text-stone-100 flex flex-col items-center justify-center p-6 text-center transition-colors">
         <h2 className="font-serif text-2xl font-semibold mb-2">Work Not Found</h2>
-        <p className="text-xs text-stone-500 mb-4">The book or comic you are attempting to read does not exist.</p>
+        <p className="text-xs text-stone-500 dark:text-stone-400 mb-4">The book or comic you are attempting to read does not exist.</p>
         <button
           onClick={() => navigate('/library')}
-          className="px-4 py-2 text-xs font-semibold bg-stone-900 text-white rounded hover:bg-stone-800 transition-colors"
+          className="px-4 py-2 text-xs font-semibold bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-xl hover:opacity-90 transition-opacity cursor-pointer"
         >
           Return to Library
         </button>
@@ -32,19 +32,23 @@ export const ReaderPage: React.FC<ReaderPageProps> = ({ workId, chapterId }) => 
     );
   }
 
-  // Find chapter by id or number or slug
-  const chapter = work.chapters.find((c: Chapter) => c.id === chapterId || c.slug === chapterId || String(c.number) === chapterId) || work.chapters[0];
+  // Find chapter safely by id, number, or slug
+  const chapters = work.chapters || [];
+  const chapter =
+    chapters.find((c: Chapter) => c && (c.id === chapterId || c.slug === chapterId || String(c.number) === chapterId || String(c.chapterNumber) === chapterId)) ||
+    chapters[0];
 
   if (!chapter) {
+    const prefix = work.type === 'book' ? 'book' : work.type === 'comic' ? 'comic' : work.type === 'manga' ? 'manga' : 'work';
     return (
-      <div className="min-h-screen bg-[#FBF9F5] text-stone-900 flex flex-col items-center justify-center p-6 text-center transition-colors">
-        <h2 className="font-serif text-2xl font-semibold mb-2">Chapter Not Found</h2>
-        <p className="text-xs text-stone-500 mb-4">No content found for this chapter identifier.</p>
+      <div className="min-h-screen bg-[#FBF9F5] dark:bg-[#12141A] text-stone-900 dark:text-stone-100 flex flex-col items-center justify-center p-6 text-center transition-colors">
+        <h2 className="font-serif text-2xl font-semibold mb-2">Chapter Not Available</h2>
+        <p className="text-xs text-stone-500 dark:text-stone-400 mb-4">No readable chapter content was found for this work yet.</p>
         <button
-          onClick={() => navigate(`/work/${work.slug}`)}
-          className="px-4 py-2 text-xs font-semibold bg-stone-900 text-white rounded hover:bg-stone-800 transition-colors"
+          onClick={() => navigate(`/${prefix}/${work.slug || work.id}`)}
+          className="px-4 py-2 text-xs font-semibold bg-stone-900 dark:bg-stone-100 text-white dark:text-stone-900 rounded-xl hover:opacity-90 transition-opacity cursor-pointer"
         >
-          Work Overview
+          Return to Work Overview
         </button>
       </div>
     );

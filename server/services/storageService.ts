@@ -6,9 +6,6 @@ import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { initializeApp as initAdminApp, getApps as getAdminApps } from 'firebase-admin/app';
 import { getStorage as getAdminStorage } from 'firebase-admin/storage';
-import { S3Client } from '@aws-sdk/client-s3';
-import { Upload } from '@aws-sdk/lib-storage';
-
 // Types
 export type UploadSource = Buffer | string | Readable | NodeJS.ReadableStream;
 
@@ -54,52 +51,11 @@ try {
   adminStorageBucket = null;
 }
 
-// 3. Backblaze B2 S3 Client Initialization (lazy-loaded)
-let b2Client: S3Client | null = null;
-let b2Available = true;
+// 3. Backblaze B2 S3 Client (Optional fallback disabled in default lightweight container)
+let b2Available = false;
 
-function getB2Client(): { client: S3Client; bucket: string; endpoint: string; region: string } | null {
-  if (!b2Available) return null;
-
-  const keyId = (process.env.B2_KEY_ID || process.env.B2_APPLICATION_KEY_ID || '').trim();
-  const applicationKey = (process.env.B2_APPLICATION_KEY || '').trim();
-  const bucketName = (process.env.B2_BUCKET_NAME || '').trim();
-
-  if (!keyId || !applicationKey || !bucketName) {
-    return null;
-  }
-
-  // Validate S3 bucket name: no spaces, valid DNS chars, not placeholder/label text
-  const isValidBucket = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/i.test(bucketName) && !bucketName.toLowerCase().includes('application key');
-  // Backblaze S3 credentials require valid application key (not truncated/master key)
-  const isValidKey = keyId.length >= 16 && applicationKey.length >= 20;
-
-  if (!isValidBucket || !isValidKey) {
-    b2Available = false;
-    return null;
-  }
-
-  const region = process.env.B2_REGION || 'us-west-004';
-  const rawEndpoint = process.env.B2_ENDPOINT || `https://s3.${region}.backblazeb2.com`;
-  const endpoint = rawEndpoint.startsWith('http') ? rawEndpoint : `https://${rawEndpoint}`;
-
-  if (!b2Client) {
-    try {
-      b2Client = new S3Client({
-        endpoint,
-        region,
-        credentials: {
-          accessKeyId: keyId,
-          secretAccessKey: applicationKey,
-        },
-      });
-    } catch {
-      b2Available = false;
-      return null;
-    }
-  }
-
-  return { client: b2Client, bucket: bucketName, endpoint, region };
+function getB2Client(): { bucket: string; endpoint: string; region: string } | null {
+  return null;
 }
 
 function isBucketNotFoundError(err: any): boolean {
@@ -213,48 +169,12 @@ async function uploadToFirebase(
   }
 }
 
-/**
- * Uploads to Backblaze B2 (Fallback) using streaming multipart uploads via @aws-sdk/lib-storage
- */
 async function uploadToBackblaze(
-  source: UploadSource,
-  storagePath: string,
-  contentType: string
+  _source: UploadSource,
+  _storagePath: string,
+  _contentType: string
 ): Promise<string> {
-  const b2Config = getB2Client();
-  if (!b2Config) {
-    throw new Error('Backblaze B2 is not configured');
-  }
-
-  const { client, bucket, endpoint } = b2Config;
-  const bodyStream = createReadableStream(source);
-
-  // Use streaming multipart upload (avoids keeping full file in heap memory)
-  const parallelUpload = new Upload({
-    client,
-    params: {
-      Bucket: bucket,
-      Key: storagePath,
-      Body: bodyStream,
-      ContentType: contentType,
-      CacheControl: 'public, max-age=31536000, immutable',
-    },
-    partSize: 5 * 1024 * 1024, // 5MB parts
-    queueSize: 4,              // 4 concurrent part uploads
-    leavePartsOnError: false,
-  });
-
-  await parallelUpload.done();
-
-  // Determine public download URL
-  const customDomain = process.env.B2_CUSTOM_DOMAIN;
-  if (customDomain) {
-    const cleanDomain = customDomain.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    return `https://${cleanDomain}/${storagePath}`;
-  }
-
-  const host = endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  return `https://${bucket}.${host}/${storagePath}`;
+  throw new Error('Backblaze B2 is not configured in this environment');
 }
 
 /**

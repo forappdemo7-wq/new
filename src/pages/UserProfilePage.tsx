@@ -32,7 +32,13 @@ import {
   ArrowLeft,
   BookMarked,
   ShieldCheck,
+  Trash2,
+  Upload,
+  X,
+  AlertTriangle,
+  ExternalLink,
 } from 'lucide-react';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface UserProfilePageProps {
   userId: string;
@@ -40,8 +46,8 @@ interface UserProfilePageProps {
 
 export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
   const { navigate } = useRouter();
-  const { currentUser, userProfile: activeUserProfile, openAuthModal, updateUserBioAndAvatar } = useAuth();
-  const { works } = useLibrary();
+  const { currentUser, userProfile: activeUserProfile, openAuthModal, updateUserBioAndAvatar, isAdmin } = useAuth();
+  const { works, removeWork } = useLibrary();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -54,9 +60,39 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
   const [showFollowModal, setShowFollowModal] = useState<'followers' | 'following' | null>(null);
   const [followSearchQuery, setFollowSearchQuery] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [workToDelete, setWorkToDelete] = useState<Work | null>(null);
+  const [deleteNotification, setDeleteNotification] = useState<string | null>(null);
 
   const activeUid = currentUser?.uid || activeUserProfile?.uid;
-  const isOwnProfile = Boolean(activeUid && (activeUid === userId || activeUserProfile?.displayName?.toLowerCase() === userId?.toLowerCase()));
+  const isOwnProfile = Boolean(
+    activeUid && (
+      activeUid === userId ||
+      activeUserProfile?.displayName?.toLowerCase() === userId?.toLowerCase() ||
+      (profile?.uid && activeUid === profile.uid) ||
+      (currentUser?.email && profile?.email && currentUser.email.toLowerCase() === profile.email.toLowerCase())
+    )
+  );
+
+  const canDeleteWork = (work: Work) => {
+    if (isAdmin) return true;
+    // Non-admin users can only delete community-published creations they own
+    const isCommunity = Boolean(
+      work.uploaderId ||
+      work.publisherId ||
+      work.publisherEmail ||
+      work.jurisdictionStatus === 'COMMUNITY_OPEN' ||
+      work.sourceName === 'Community Self-Published' ||
+      work.sourceName?.toLowerCase().includes('community') ||
+      work.sourceName?.toLowerCase().includes('user') ||
+      work.sourceName?.toLowerCase().includes('upload')
+    );
+    if (!isCommunity) return false;
+
+    if (activeUid && (work.uploaderId === activeUid || work.publisherId === activeUid)) return true;
+    if (currentUser?.email && work.publisherEmail && currentUser.email.toLowerCase() === work.publisherEmail.toLowerCase()) return true;
+    if (isOwnProfile && work.publisherName && activeUserProfile?.displayName && work.publisherName.toLowerCase() === activeUserProfile.displayName.toLowerCase()) return true;
+    return false;
+  };
 
   // Active user's following map for instant modal and card reactivity
   const [activeFollowingMap, setActiveFollowingMap] = useState<Record<string, boolean>>(() => {
@@ -165,10 +201,24 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
     const targetName = profile.displayName?.toLowerCase();
 
     return works.filter((w: Work) => {
-      const matchesUid = w.uploaderId === targetUid || w.publisherId === targetUid;
+      // Must be a user-uploaded / community-published creation
+      const isCommunity = Boolean(
+        w.uploaderId ||
+        w.publisherId ||
+        w.publisherEmail ||
+        w.jurisdictionStatus === 'COMMUNITY_OPEN' ||
+        w.sourceName === 'Community Self-Published' ||
+        w.sourceName?.toLowerCase().includes('community') ||
+        w.sourceName?.toLowerCase().includes('user') ||
+        w.sourceName?.toLowerCase().includes('upload')
+      );
+      if (!isCommunity) return false;
+
+      const matchesUid = Boolean(targetUid && (w.uploaderId === targetUid || w.publisherId === targetUid));
       const matchesEmail = Boolean(targetEmail && w.publisherEmail?.toLowerCase() === targetEmail);
-      const matchesName = Boolean(targetName && (w.publisherName?.toLowerCase() === targetName || w.authors?.some(a => a.name?.toLowerCase() === targetName)));
-      return matchesUid || matchesEmail || matchesName;
+      const matchesPublisher = Boolean(targetName && w.publisherName?.toLowerCase() === targetName);
+      const matchesAuthor = Boolean(targetName && w.authors?.some((a) => a?.name?.toLowerCase() === targetName));
+      return matchesUid || matchesEmail || matchesPublisher || matchesAuthor;
     });
   }, [works, profile]);
 
@@ -557,11 +607,106 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
         {/* ── TAB 1: UPLOADED WORKS ────────────────────────────────── */}
         {activeTab === 'uploads' && (
           <div className="space-y-4">
+            {/* Delete Success / Feedback Toast */}
+            {deleteNotification && (
+              <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs sm:text-sm flex items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                    <Check className="w-3.5 h-3.5" />
+                  </span>
+                  <span className="font-medium">{deleteNotification}</span>
+                </div>
+                <button
+                  onClick={() => setDeleteNotification(null)}
+                  className="p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-lg text-emerald-600 dark:text-emerald-400 cursor-pointer"
+                  title="Dismiss"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Author Works Management Banner (Shown to uploader/profile owner) */}
+            {(isOwnProfile || isAdmin || uploadedWorks.some(canDeleteWork)) && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#151820] border border-stone-200 dark:border-stone-800 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start sm:items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 shrink-0">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <h3 className="font-serif text-sm sm:text-base font-bold text-stone-900 dark:text-stone-100 flex items-center gap-2">
+                      <span>Public Creations Management</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300">
+                        {uploadedWorks.length} {uploadedWorks.length === 1 ? 'Work' : 'Works'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-stone-500 dark:text-stone-400">
+                      {isOwnProfile
+                        ? 'Manage your public creations below. You can view reading stats, inspect details, or permanently delete any uploaded work.'
+                        : 'You have administrative permission to manage or remove public works from this profile.'}
+                    </p>
+                  </div>
+                </div>
+
+                {isOwnProfile && (
+                  <button
+                    onClick={() => navigate('/user-uploads')}
+                    className="px-4 py-2 bg-[#C25E3A] hover:bg-[#a84e2e] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-2 shrink-0 self-start sm:self-auto"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload New Work</span>
+                  </button>
+                )}
+              </div>
+            )}
+
             {uploadedWorks.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4 md:gap-5">
-                {uploadedWorks.map((work) => (
-                  <MediaCard key={work.id} work={work} />
-                ))}
+                {uploadedWorks.map((work) => {
+                  const hasDeletePermission = canDeleteWork(work);
+                  return (
+                    <div
+                      key={work.id}
+                      className="flex flex-col h-full bg-white dark:bg-[#151820] p-1.5 sm:p-2 rounded-2xl border border-stone-200/80 dark:border-stone-800/80 hover:border-stone-300 dark:hover:border-stone-700 shadow-2xs hover:shadow-md transition-all group"
+                    >
+                      <div className="flex-1">
+                        <MediaCard
+                          work={work}
+                          onDelete={hasDeletePermission ? (w) => setWorkToDelete(w) : undefined}
+                        />
+                      </div>
+
+                      {/* Management Action Bar Below Card */}
+                      {hasDeletePermission && (
+                        <div className="pt-2 px-1 flex items-center justify-between gap-1.5 border-t border-stone-100 dark:border-stone-800/80 mt-1">
+                          <button
+                            onClick={() => {
+                              const prefix =
+                                work.type === 'book' ? 'book' : work.type === 'comic' ? 'comic' : work.type === 'manga' ? 'manga' : 'work';
+                              navigate(`/${prefix}/${work.slug}`);
+                            }}
+                            className="flex-1 py-1.5 px-2 text-[11px] font-semibold text-stone-600 dark:text-stone-300 hover:text-stone-900 dark:hover:text-white bg-stone-100 hover:bg-stone-200 dark:bg-stone-800 dark:hover:bg-stone-700 rounded-lg transition-colors cursor-pointer text-center truncate"
+                            title={`View details for "${work.title}"`}
+                          >
+                            Details
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setWorkToDelete(work);
+                            }}
+                            className="py-1.5 px-2.5 text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:text-white hover:bg-rose-600 dark:hover:bg-rose-600 dark:hover:text-white bg-rose-50 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-900/60 rounded-lg flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                            title={`Permanently delete "${work.title}" from your profile`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="p-12 rounded-3xl bg-white dark:bg-[#151820] border border-stone-200 dark:border-stone-800 text-center space-y-3">
@@ -581,6 +726,7 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
                     onClick={() => navigate('/user-uploads')}
                     className="px-4 py-2 bg-[#C25E3A] hover:bg-[#a84e2e] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer inline-flex items-center gap-1.5"
                   >
+                    <Upload className="w-3.5 h-3.5" />
                     <span>Publish Your First Work</span>
                   </button>
                 )}
@@ -874,6 +1020,26 @@ export const UserProfilePage: React.FC<UserProfilePageProps> = ({ userId }) => {
           </div>
         </div>
       )}
+
+      {/* ── CONFIRM DELETE WORK MODAL ────────────────────────────── */}
+      <ConfirmModal
+        isOpen={Boolean(workToDelete)}
+        title={`Delete "${workToDelete?.title}"?`}
+        message={`Are you sure you want to permanently delete "${workToDelete?.title}"?\n\nThis will remove it from your public profile, community feed, and library catalog. All chapters, reader comments, and bookmarks will be removed. This action cannot be undone.`}
+        confirmLabel="Delete Work"
+        cancelLabel="Keep Work"
+        isDestructive={true}
+        onConfirm={() => {
+          if (workToDelete) {
+            const title = workToDelete.title;
+            removeWork(workToDelete.id);
+            setWorkToDelete(null);
+            setDeleteNotification(`"${title}" was permanently deleted from your public profile and catalog.`);
+            setTimeout(() => setDeleteNotification(null), 4500);
+          }
+        }}
+        onCancel={() => setWorkToDelete(null)}
+      />
     </div>
   );
 };

@@ -32,17 +32,17 @@ export const OpdsFeedPage: React.FC = () => {
           '@type': 'http://schema.org/Book',
           title: w.title,
           identifier: `urn:getnow:work:${w.id}`,
-          author: w.authors.map((a) => a.name).join(', '),
+          author: w.authors?.map((a: any) => (typeof a === 'string' ? a : a?.name || '')).filter(Boolean).join(', ') || 'Unknown',
           language: w.language,
           published: String(w.originalPublicationYear),
-          description: w.description,
-          rights: `${w.licenseCode} - ${w.attribution}`
+          description: w.description || '',
+          rights: `${w.licenseCode || ''} - ${w.attribution || ''}`
         },
         images: [
           { href: w.coverImage, type: 'image/jpeg' }
         ],
         links: [
-          { href: `/read/${w.id}/${w.chapters[0]?.id || '1'}`, type: 'text/html', rel: 'http://opds-spec.org/acquisition' }
+          { href: `/read/${w.id}/${w.chapters?.[0]?.id || '1'}`, type: 'text/html', rel: 'http://opds-spec.org/acquisition' }
         ]
       }))
     },
@@ -73,16 +73,16 @@ ${works
     <id>urn:wannaread:work:${w.id}</id>
     <updated>${w.updatedAt || new Date().toISOString()}</updated>
     <author>
-      <name>${w.authors.map(a => a.name).join(', ')}</name>
+      <name>${w.authors?.map((a: any) => (typeof a === 'string' ? a : a?.name || '')).filter(Boolean).join(', ') || 'Unknown'}</name>
     </author>
     <dc:language>${w.language}</dc:language>
     <dc:issued>${w.originalPublicationYear}</dc:issued>
-    <summary>${w.description.replace(/[&<>'"]/g, '')}</summary>
+    <summary>${(w.description || '').replace(/[&<>'"]/g, '')}</summary>
     <link rel="http://opds-spec.org/image" href="${w.coverImage}" type="image/jpeg"/>
     <link rel="http://opds-spec.org/image/thumbnail" href="${w.coverImage}" type="image/jpeg"/>
-    <link rel="http://opds-spec.org/acquisition" href="/read/${w.id}/${w.chapters[0]?.id || '1'}" type="text/html"/>
-    <category term="${w.genres[0] || 'General'}" label="${w.genres[0] || 'General'}"/>
-    <dc:rights>${w.licenseCode} - ${w.attribution.replace(/[&<>'"]/g, '')}</dc:rights>
+    <link rel="http://opds-spec.org/acquisition" href="/read/${w.id}/${w.chapters?.[0]?.id || '1'}" type="text/html"/>
+    <category term="${(w.genres && w.genres[0]) || 'General'}" label="${(w.genres && w.genres[0]) || 'General'}"/>
+    <dc:rights>${w.licenseCode || ''} - ${(w.attribution || '').replace(/[&<>'"]/g, '')}</dc:rights>
   </entry>`
   )
   .join('\n\n')}

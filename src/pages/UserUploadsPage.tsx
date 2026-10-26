@@ -21,13 +21,16 @@ import {
   User,
   ArrowRight,
   X,
+  Trash2,
+  Check,
 } from 'lucide-react';
+import { ConfirmModal } from '../components/common/ConfirmModal';
 import { Work } from '../types';
 
 export const UserUploadsPage: React.FC = () => {
-  const { works, createOrUpdateWork } = useLibrary();
+  const { works, createOrUpdateWork, removeWork } = useLibrary();
   const { navigate } = useRouter();
-  const { currentUser, userProfile, openAuthModal } = useAuth();
+  const { currentUser, userProfile, openAuthModal, isAdmin } = useAuth();
   const likesVersion = useLikesSync();
 
   const [viewMode, setViewMode] = useState<'community' | 'my-uploads'>('community');
@@ -37,6 +40,8 @@ export const UserUploadsPage: React.FC = () => {
   const searchContainerRef = useRef<HTMLDivElement | null>(null);
   const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [workToDelete, setWorkToDelete] = useState<Work | null>(null);
+  const [deleteToast, setDeleteToast] = useState<string | null>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -63,6 +68,13 @@ export const UserUploadsPage: React.FC = () => {
 
   const activeUserId = currentUser?.uid || userProfile?.uid;
   const activeDisplayName = userProfile?.displayName || currentUser?.displayName || 'Reader';
+
+  const canDeleteWork = (w: Work) => {
+    if (isAdmin) return true;
+    if (activeUserId && (w.uploaderId === activeUserId || w.publisherId === activeUserId)) return true;
+    if (currentUser?.email && w.publisherEmail && currentUser.email.toLowerCase() === w.publisherEmail.toLowerCase()) return true;
+    return false;
+  };
 
   const handlePublishClick = () => {
     const activeReader = currentUser || userProfile;
@@ -95,9 +107,11 @@ export const UserUploadsPage: React.FC = () => {
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const titleMatch = w.title.toLowerCase().includes(q);
-        const authorMatch = w.authors?.some((a) => a.name.toLowerCase().includes(q));
-        const genreMatch = w.genres?.some((g) => g.toLowerCase().includes(q));
+        const titleMatch = (w.title || '').toLowerCase().includes(q);
+        const authorMatch = w.authors?.some((a: any) =>
+          (typeof a === 'string' ? a : a?.name || '').toLowerCase().includes(q)
+        );
+        const genreMatch = w.genres?.some((g) => (g || '').toLowerCase().includes(q));
         const publisherMatch =
           Boolean(w.publisherName && w.publisherName.toLowerCase().includes(q)) ||
           Boolean(w.publisherEmail && w.publisherEmail.toLowerCase().includes(q)) ||
@@ -181,6 +195,24 @@ export const UserUploadsPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Delete Feedback Toast */}
+        {deleteToast && (
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs sm:text-sm flex items-center justify-between gap-3 shadow-xs animate-in fade-in duration-200">
+            <div className="flex items-center gap-2.5">
+              <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Check className="w-3.5 h-3.5" />
+              </span>
+              <span className="font-medium">{deleteToast}</span>
+            </div>
+            <button
+              onClick={() => setDeleteToast(null)}
+              className="p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-lg text-emerald-600 dark:text-emerald-400 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* ── Main View Tabs: All Community vs My Uploads ──────────────── */}
         <div className="flex items-center justify-between gap-4 border-b border-stone-200 dark:border-stone-800 pb-3 flex-wrap">
@@ -427,7 +459,11 @@ export const UserUploadsPage: React.FC = () => {
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4 md:gap-5">
                 {showcased.map((work) => (
-                  <MediaCard key={work.id} work={work} />
+                  <MediaCard
+                    key={work.id}
+                    work={work}
+                    onDelete={canDeleteWork(work) ? (w) => setWorkToDelete(w) : undefined}
+                  />
                 ))}
               </div>
 
@@ -497,7 +533,11 @@ export const UserUploadsPage: React.FC = () => {
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4 md:gap-5">
                 {showcased.map((work) => (
-                  <MediaCard key={work.id} work={work} />
+                  <MediaCard
+                    key={work.id}
+                    work={work}
+                    onDelete={canDeleteWork(work) ? (w) => setWorkToDelete(w) : undefined}
+                  />
                 ))}
               </div>
 
@@ -567,7 +607,11 @@ export const UserUploadsPage: React.FC = () => {
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4 md:gap-5">
                 {showcased.map((work) => (
-                  <MediaCard key={work.id} work={work} />
+                  <MediaCard
+                    key={work.id}
+                    work={work}
+                    onDelete={canDeleteWork(work) ? (w) => setWorkToDelete(w) : undefined}
+                  />
                 ))}
               </div>
 
@@ -637,7 +681,11 @@ export const UserUploadsPage: React.FC = () => {
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 sm:gap-4">
                 {showcased.map((work) => (
-                  <MediaCard key={work.id} work={work} />
+                  <MediaCard
+                    key={work.id}
+                    work={work}
+                    onDelete={canDeleteWork(work) ? (w) => setWorkToDelete(w) : undefined}
+                  />
                 ))}
               </div>
 
@@ -667,6 +715,26 @@ export const UserUploadsPage: React.FC = () => {
       <PublishWorkModal
         isOpen={isPublishModalOpen}
         onClose={() => setIsPublishModalOpen(false)}
+      />
+
+      {/* Confirm Delete Work Modal */}
+      <ConfirmModal
+        isOpen={Boolean(workToDelete)}
+        title={`Delete "${workToDelete?.title}"?`}
+        message={`Are you sure you want to permanently delete "${workToDelete?.title}"?\n\nThis will remove it from your public profile and the library catalog. All chapters, reader comments, and bookmarks will be removed. This action cannot be undone.`}
+        confirmLabel="Delete Work"
+        cancelLabel="Keep Work"
+        isDestructive={true}
+        onConfirm={() => {
+          if (workToDelete) {
+            const title = workToDelete.title;
+            removeWork(workToDelete.id);
+            setWorkToDelete(null);
+            setDeleteToast(`"${title}" was permanently deleted from your public profile and catalog.`);
+            setTimeout(() => setDeleteToast(null), 4500);
+          }
+        }}
+        onCancel={() => setWorkToDelete(null)}
       />
     </div>
   );

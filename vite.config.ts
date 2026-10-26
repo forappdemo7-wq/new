@@ -184,9 +184,6 @@ export default defineConfig(() => {
             if (id.includes('node_modules/pdfjs-dist') || id.includes('node_modules/jszip')) {
               return 'vendor-parsers';
             }
-            if (id.includes('node_modules/three')) {
-              return 'vendor-three';
-            }
           },
         },
       },

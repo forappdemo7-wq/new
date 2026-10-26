@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { Work, Chapter } from '../../types';
 import { X, BookOpen, Users, HelpCircle, FileText, Languages } from 'lucide-react';
 import { apiUrl } from '../../services/apiConfig';

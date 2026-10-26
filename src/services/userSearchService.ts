@@ -158,14 +158,15 @@ export function getAllKnownUsers(works: Work[] = []): SearchableUser[] {
   // 5. Connect and map user-uploaded works
   if (Array.isArray(works) && works.length > 0) {
     works.forEach((w) => {
-      const publisherUid = w.publisherId || w.uploaderId;
-      const publisherName = w.publisherName || w.authors?.[0]?.name;
+      const firstAuthor = w.authors?.[0];
+      const authorStr = typeof firstAuthor === 'string' ? firstAuthor : firstAuthor?.name;
+      const publisherName = w.publisherName || authorStr;
       const isCommunity =
         w.jurisdictionStatus === 'COMMUNITY_OPEN' ||
         w.sourceName === 'Community Self-Published' ||
         Boolean(w.publisherId) ||
         Boolean(w.uploaderId);
-
+      const publisherUid = w.publisherId || w.uploaderId;
       if (!isCommunity && !publisherUid) return;
 
       const userTargetUid =

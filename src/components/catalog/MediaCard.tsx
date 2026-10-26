@@ -3,7 +3,7 @@ import { Work, WorkLike } from '../../types';
 import { useRouter } from '../../context/RouterContext';
 import { useLibrary } from '../../context/LibraryContext';
 import { useAuth } from '../../context/AuthContext';
-import { Bookmark, Globe, Heart, MessageSquare, User, Search } from 'lucide-react';
+import { Bookmark, Globe, Heart, MessageSquare, User, Search, Trash2 } from 'lucide-react';
 import { generateGhostCoverSvg } from '../../services/coverService';
 import {
   subscribeWorkLikes,
@@ -17,11 +17,13 @@ interface MediaCardProps {
   work: Work;
   variant?: 'grid' | 'list' | 'compact';
   showAttribution?: boolean;
+  onDelete?: (work: Work) => void;
 }
 
 export const MediaCard: React.FC<MediaCardProps> = ({
   work,
   variant = 'grid',
+  onDelete,
 }) => {
   const { navigate } = useRouter();
   const { isFavorite, toggleFavoriteWork, progress } = useLibrary();
@@ -97,8 +99,9 @@ export const MediaCard: React.FC<MediaCardProps> = ({
   }, [work?.id, activeUserId, alternateUserId]);
 
   const favorited = isFavorite(work.id);
-  const userProgress = progress[work.id];
-  const authorNames = work.authors?.map((a) => a.name).join(', ') || 'Anonymous';
+  const authorNames =
+    work.authors?.map((a: any) => (typeof a === 'string' ? a : a?.name || '')).filter(Boolean).join(', ') ||
+    'Anonymous';
   const isLinkOut = !work.isHosted || work.jurisdictionStatus === 'LINK_OUT_ONLY';
 
   const isCommunityUpload = Boolean(
@@ -107,7 +110,10 @@ export const MediaCard: React.FC<MediaCardProps> = ({
     work.jurisdictionStatus === 'COMMUNITY_OPEN' ||
     work.sourceName === 'Community Self-Published'
   );
-  const uploaderName = work.publisherName || work.authors?.[0]?.name || 'Creator';
+  const uploaderName =
+    work.publisherName ||
+    (typeof work.authors?.[0] === 'string' ? work.authors[0] : work.authors?.[0]?.name) ||
+    'Creator';
 
   // Format type label cleanly
   const typeLabel = work.type === 'book' ? 'Book' : work.type === 'comic' ? 'Comic' : 'Manga';
@@ -136,6 +142,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({
       }
       return;
     }
+    const userProgress = progress[work.id];
     const chapterId = userProgress?.chapterId || work.chapters?.[0]?.id || '1';
     navigate(`/read/${work.id}/${chapterId}`);
   };
@@ -267,6 +274,23 @@ export const MediaCard: React.FC<MediaCardProps> = ({
           <Bookmark className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${favorited ? 'fill-current' : ''}`} />
         </button>
 
+        {/* Delete button over cover if user owns this work or can delete */}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onDelete(work);
+            }}
+            title="Delete uploaded work"
+            aria-label="Delete uploaded work"
+            className="absolute top-1.5 right-9 sm:top-2 sm:right-11 p-1.5 sm:p-2 rounded-lg backdrop-blur-md transition-all z-10 focus:outline-none cursor-pointer bg-rose-600/90 hover:bg-rose-700 text-white shadow-xs border border-rose-400/40"
+          >
+            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          </button>
+        )}
+
         {/* Community Uploader Tag Over Cover (Top Left) */}
         {isCommunityUpload && (
           <button
@@ -285,26 +309,6 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         )}
       </div>
 
-      {/* Badges Row: Format & License */}
-      <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap min-w-0">
-        <span
-          className={`px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-sans font-medium tracking-wide truncate ${
-            work.type === 'book'
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/60'
-              : work.type === 'manga'
-              ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-200/70 dark:border-rose-800/60'
-              : 'bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border border-sky-200/70 dark:border-sky-800/60'
-          }`}
-        >
-          {typeLabel}
-        </span>
-
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-sans font-medium bg-stone-100 dark:bg-stone-800/80 text-stone-700 dark:text-stone-300 border border-stone-200/70 dark:border-stone-700/60 truncate">
-          <Globe className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-stone-500 shrink-0" />
-          <span className="truncate">{licenseLabel}</span>
-        </span>
-      </div>
-
       {/* Title & Author */}
       <div className="space-y-0.5 min-w-0 flex-1">
         <h4 className="font-serif font-bold text-xs sm:text-sm md:text-[15px] text-stone-900 dark:text-stone-100 group-hover:text-[#C25E3A] dark:group-hover:text-[#D9774F] transition-colors line-clamp-2 leading-snug break-words">
@@ -313,6 +317,19 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         <p className="text-[11px] sm:text-xs text-stone-500 dark:text-stone-400 font-sans truncate">
           {authorNames}
         </p>
+      </div>
+
+      {/* Unboxed Metadata Line with Subtle Separators */}
+      <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-stone-500 dark:text-stone-400 font-sans min-w-0 truncate">
+        <span className="font-medium text-stone-700 dark:text-stone-300">{typeLabel}</span>
+        <span aria-hidden="true" className="text-stone-300 dark:text-stone-600">·</span>
+        <span className="truncate">{licenseLabel}</span>
+        {work.originalPublicationYear ? (
+          <>
+            <span aria-hidden="true" className="text-stone-300 dark:text-stone-600">·</span>
+            <span>{work.originalPublicationYear}</span>
+          </>
+        ) : null}
       </div>
 
       {/* Community Engagement Stats Row: Like + Comment */}
@@ -356,14 +373,30 @@ export const MediaCard: React.FC<MediaCardProps> = ({
         </button>
       </div>
 
-      {/* Bottom Row: Read CTA */}
+      {/* Bottom Row: Read CTA & Optional Delete Action */}
       <div className="pt-1 flex items-center justify-between min-w-0 gap-2">
         <button
           onClick={handleRead}
-          className="w-full py-1.5 sm:py-2 px-3 text-xs sm:text-sm font-semibold text-white bg-stone-900 hover:bg-stone-800 dark:bg-stone-100 dark:hover:bg-white dark:text-stone-900 rounded-lg transition-colors cursor-pointer min-h-[32px] sm:min-h-[36px] flex items-center justify-center shadow-xs"
+          className="flex-1 py-1.5 sm:py-2 px-3 text-xs sm:text-sm font-semibold text-white bg-stone-900 hover:bg-stone-800 dark:bg-stone-100 dark:hover:bg-white dark:text-stone-900 rounded-lg transition-colors cursor-pointer min-h-[32px] sm:min-h-[36px] flex items-center justify-center shadow-xs"
         >
           Read
         </button>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onDelete(work);
+            }}
+            title="Delete this uploaded work"
+            aria-label="Delete this uploaded work"
+            className="py-1.5 sm:py-2 px-2.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-900/60 transition-colors cursor-pointer shrink-0 min-h-[32px] sm:min-h-[36px] flex items-center gap-1 text-xs font-semibold"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Delete</span>
+          </button>
+        )}
       </div>
 
       {/* Likers Modal */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { Chapter, ComicPage, Work, ReadingDirection } from '../../types';
 import { useRouter } from '../../context/RouterContext';
 import { useLibrary } from '../../context/LibraryContext';
@@ -268,7 +268,9 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
       ? 'bg-[#F4EFEA]/95 border-[#E2D8CF]'
       : 'bg-[#121212]/95 border-stone-800';
 
-  const authorName = work.authors?.map((a) => a.name).join(', ') || 'Anonymous';
+  const authorName =
+    work.authors?.map((a: any) => (typeof a === 'string' ? a : a?.name || '')).filter(Boolean).join(', ') ||
+    'Anonymous';
 
   return (
     <div

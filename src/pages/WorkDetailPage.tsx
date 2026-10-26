@@ -29,7 +29,7 @@ import {
   Trash2,
   Shield,
 } from 'lucide-react';
-import { Author, WorkLike } from '../types';
+import { Author, WorkLike, Chapter } from '../types';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface WorkDetailProps {
@@ -239,15 +239,18 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
 
   const favorited = isFavorite(work.id);
   const userProgress = progress[work.id];
-  const chapters = work.chapters || [];
-  const authorNames = work.authors?.map((a: Author) => a.name).join(', ') || 'Anonymous';
+  const authorNames =
+    work.authors?.map((a: any) => (typeof a === 'string' ? a : a?.name || '')).filter(Boolean).join(', ') ||
+    'Anonymous';
   const typeLabel = work.type === 'book' ? 'Book' : work.type === 'comic' ? 'Comic' : 'Manga';
   const isPublicDomain = work.jurisdictionStatus === 'WORLDWIDE_PD' || work.licenseCode?.includes('PD');
   const licenseLabel = isPublicDomain ? 'Public Domain' : 'Open License';
 
   const coverSrc = !imageFailed && (work.coverImageUrl || work.coverImage)
     ? work.coverImageUrl || work.coverImage
-    : generateGhostCoverSvg(work.title, authorNames, work.type, work.originalPublicationYear, work.coverPalette);
+    : generateGhostCoverSvg(work.title, authorNames, typeLabel, work.originalPublicationYear, work.coverPalette);
+
+  const chapters = work.chapters || [];
 
   const handleStartReading = (chapterId?: string) => {
     const targetChapId = chapterId || userProgress?.chapterId || chapters[0]?.id || '1';
@@ -385,33 +388,67 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                 </div>
               )}
 
-              {/* Admin Actions Bar */}
-              {isAdmin && (
-                <div className="pt-2 border-t border-dashed border-stone-200 dark:border-stone-800">
-                  <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-200/70 dark:border-amber-800/40 space-y-2">
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider">
-                      <Shield className="w-3.5 h-3.5" />
-                      <span>Admin Controls</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => navigate('/admin')}
-                        className="flex-1 py-1.5 px-2.5 bg-white dark:bg-[#151820] hover:bg-stone-50 dark:hover:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold text-center transition-colors cursor-pointer"
-                      >
-                        Admin Panel
-                      </button>
-                      <button
-                        onClick={() => setShowDeleteConfirm(true)}
-                        className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                        title="Permanently delete this work from the catalog"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete Work</span>
-                      </button>
+              {/* Admin or Creator Actions Bar */}
+              {(() => {
+                const activeUserId = userProfile?.uid || currentUser?.uid;
+                const isUploader = Boolean(
+                  work.isCommunity &&
+                  activeUserId && (
+                    work.uploaderId === activeUserId ||
+                    work.publisherId === activeUserId ||
+                    (currentUser?.email && work.publisherEmail === currentUser.email)
+                  )
+                );
+
+                if (!isAdmin && !isUploader) return null;
+
+                return (
+                  <div className="pt-2 border-t border-dashed border-stone-200 dark:border-stone-800">
+                    <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-200/70 dark:border-amber-800/40 space-y-2">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider">
+                        <div className="flex items-center gap-1.5">
+                          {isAdmin ? <Shield className="w-3.5 h-3.5" /> : <Sparkles className="w-3.5 h-3.5 text-[#C25E3A]" />}
+                          <span>{isAdmin ? 'Admin Controls' : 'Your Uploaded Work'}</span>
+                        </div>
+                        {activeUserId && (
+                          <button
+                            onClick={() => navigate(`/user/${activeUserId}`)}
+                            className="text-[10px] lowercase font-mono text-[#C25E3A] hover:underline cursor-pointer"
+                          >
+                            view public profile →
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {isAdmin && (
+                          <button
+                            onClick={() => navigate('/admin')}
+                            className="flex-1 py-1.5 px-2.5 bg-white dark:bg-[#151820] hover:bg-stone-50 dark:hover:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold text-center transition-colors cursor-pointer"
+                          >
+                            Admin Panel
+                          </button>
+                        )}
+                        {isUploader && !isAdmin && activeUserId && (
+                          <button
+                            onClick={() => navigate(`/user/${activeUserId}`)}
+                            className="flex-1 py-1.5 px-2.5 bg-white dark:bg-[#151820] hover:bg-stone-50 dark:hover:bg-stone-800 border border-stone-200 dark:border-stone-700 text-stone-800 dark:text-stone-200 rounded-lg text-xs font-semibold text-center transition-colors cursor-pointer"
+                          >
+                            My Public Profile
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setShowDeleteConfirm(true)}
+                          className="py-1.5 px-2.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Permanently delete this work from the catalog"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Work</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Community Uploader Badge & Notification Panel */}
               {(work.uploaderId || work.publisherName) && (() => {
@@ -459,23 +496,27 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
             
             {/* Header / Title block */}
             <div className="space-y-3 pb-6 border-b border-stone-200/80 dark:border-stone-800/80">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span
-                  className={`px-2.5 py-0.5 rounded-md text-xs font-medium ${
-                    work.type === 'book'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/60'
-                      : work.type === 'manga'
-                      ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-200/70 dark:border-rose-800/60'
-                      : 'bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-300 border border-sky-200/70 dark:border-sky-800/60'
-                  }`}
-                >
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-stone-500 dark:text-stone-400 font-sans flex-wrap">
+                <span className="font-semibold text-stone-800 dark:text-stone-200 uppercase tracking-wider text-[11px] font-mono">
                   {typeLabel}
                 </span>
-
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-xs font-medium bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border border-stone-200/70 dark:border-stone-700/60">
-                  <Globe className="w-3 h-3 text-stone-500" />
+                <span aria-hidden="true" className="text-stone-300 dark:text-stone-700">·</span>
+                <span className="inline-flex items-center gap-1 text-stone-700 dark:text-stone-300">
+                  <Globe className="w-3.5 h-3.5 text-stone-400" />
                   <span>{licenseLabel}</span>
                 </span>
+                {work.originalPublicationYear ? (
+                  <>
+                    <span aria-hidden="true" className="text-stone-300 dark:text-stone-700">·</span>
+                    <span>{work.originalPublicationYear}</span>
+                  </>
+                ) : null}
+                {work.readingTimeMinutes ? (
+                  <>
+                    <span aria-hidden="true" className="text-stone-300 dark:text-stone-700">·</span>
+                    <span>{work.readingTimeMinutes} min read</span>
+                  </>
+                ) : null}
               </div>
 
               <h1 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-stone-950 dark:text-stone-50 tracking-tight leading-tight">
@@ -600,7 +641,7 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
                   Contents ({chapters.length} {chapters.length === 1 ? 'Chapter' : 'Chapters'})
                 </h3>
                 <div className="divide-y divide-stone-200/60 dark:divide-stone-800/60 rounded-xl bg-white dark:bg-[#151820] border border-stone-200/80 dark:border-stone-800 overflow-hidden">
-                  {chapters.slice(0, 15).map((chap, idx) => (
+                  {chapters.slice(0, 15).map((chap: Chapter, idx: number) => (
                     <button
                       key={chap.id}
                       onClick={() => handleStartReading(chap.id)}
@@ -785,17 +826,22 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
         </div>
       )}
 
-      {/* Admin Delete Confirmation Modal */}
+      {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={showDeleteConfirm}
         title="Delete Work from Catalog?"
-        message={`Are you sure you want to permanently delete "${work.title}"?\n\nThis will remove it from the catalog, search index, and delete its database entries.`}
+        message={`Are you sure you want to permanently delete "${work.title}"?\n\nThis will remove it from your public profile, the catalog, and search index. All chapters, reader comments, and bookmarks will be removed. This action cannot be undone.`}
         confirmLabel="Delete Work"
-        cancelLabel="Cancel"
+        cancelLabel="Keep Work"
         isDestructive={true}
         onConfirm={() => {
           removeWork(work.id);
-          navigate('/library');
+          const activeUid = userProfile?.uid || currentUser?.uid;
+          if (activeUid) {
+            navigate(`/user/${activeUid}`);
+          } else {
+            navigate('/library');
+          }
         }}
         onCancel={() => setShowDeleteConfirm(false)}
       />

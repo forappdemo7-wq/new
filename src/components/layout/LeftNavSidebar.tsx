@@ -18,6 +18,7 @@ import {
   History,
   Download,
   User,
+  Users,
   Settings,
   Shield
 } from 'lucide-react';
@@ -234,6 +235,23 @@ export const LeftNavSidebar: React.FC = () => {
                 </div>
               </div>
               <Settings className="w-3.5 h-3.5 text-stone-400 group-hover:text-stone-700 dark:group-hover:text-stone-200" />
+            </div>
+
+            <div className="pt-2 border-t border-stone-100 dark:border-stone-800/80 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const myUid = userProfile?.uid || currentUser.uid;
+                  if (myUid) navigate(`/user/${myUid}`);
+                }}
+                className="text-[11px] font-semibold text-[#C25E3A] hover:underline flex items-center gap-1 cursor-pointer"
+                title="View your public author profile"
+              >
+                <Users className="w-3 h-3" />
+                <span>View Public Profile</span>
+              </button>
+              <span className="text-[10px] text-stone-400 font-mono">Settings →</span>
             </div>
           </div>
         ) : (

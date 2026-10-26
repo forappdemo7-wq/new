@@ -4,7 +4,6 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
-import sharp from 'sharp';
 import yauzl from 'yauzl';
 import { fileTypeFromFile } from 'file-type';
 import { uploadMediaFile } from '../services/storageService';
@@ -121,24 +120,21 @@ mediaApiRouter.post(
         return res.status(400).json({ error: 'Invalid file type. File does not match allowed image formats.' });
       }
 
-      const outFileName = `cover-${crypto.randomBytes(6).toString('hex')}.webp`;
+      const ft = await fileTypeFromFile(tempFilePath);
+      const mime = ft?.mime || 'image/jpeg';
+      const ext = ft?.ext ? `.${ft.ext}` : path.extname(tempFilePath) || '.jpg';
+      const outFileName = `cover-${crypto.randomBytes(6).toString('hex')}${ext}`;
       const storagePath = `users/${userId}/${randomWorkId}/${outFileName}`;
-      const optimizedTempPath = path.resolve(TEMP_UPLOADS, `opt-cover-${crypto.randomBytes(6).toString('hex')}.webp`);
+      const optimizedTempPath = path.resolve(TEMP_UPLOADS, `opt-cover-${crypto.randomBytes(6).toString('hex')}${ext}`);
       cleanupFiles.add(optimizedTempPath);
-
-      // Stream directly from disk through Sharp to temporary WebP file
-      const sharpTransformer = sharp()
-        .resize({ width: 1200, withoutEnlargement: true, fit: 'inside' })
-        .webp({ quality: 85, effort: 4 });
 
       await pipeline(
         fs.createReadStream(tempFilePath),
-        sharpTransformer,
         fs.createWriteStream(optimizedTempPath)
       );
 
       // Upload file directly using streaming disk pipeline
-      const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, 'image/webp');
+      const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, mime);
       return res.json({ success: true, coverUrl: uploadRes.url, provider: uploadRes.provider });
     } catch (err: any) {
       console.error('Error optimizing cover image:', err);
@@ -191,22 +187,20 @@ mediaApiRouter.post(
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const pageIndex = (i + 1).toString().padStart(3, '0');
-        const outFileName = `page_${pageIndex}_${crypto.randomBytes(4).toString('hex')}.webp`;
+        const ft = await fileTypeFromFile(file.path);
+        const mime = ft?.mime || 'image/jpeg';
+        const ext = ft?.ext ? `.${ft.ext}` : path.extname(file.originalname) || '.jpg';
+        const outFileName = `page_${pageIndex}_${crypto.randomBytes(4).toString('hex')}${ext}`;
         const storagePath = `users/${userId}/${randomWorkId}/${outFileName}`;
-        const optimizedTempPath = path.resolve(TEMP_UPLOADS, `opt-page-${crypto.randomBytes(6).toString('hex')}.webp`);
+        const optimizedTempPath = path.resolve(TEMP_UPLOADS, `opt-page-${crypto.randomBytes(6).toString('hex')}${ext}`);
         cleanupFiles.add(optimizedTempPath);
-
-        const sharpTransformer = sharp()
-          .resize({ width: 1800, withoutEnlargement: true, fit: 'inside' })
-          .webp({ quality: 85, effort: 3 });
 
         await pipeline(
           fs.createReadStream(file.path),
-          sharpTransformer,
           fs.createWriteStream(optimizedTempPath)
         );
 
-        const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, 'image/webp');
+        const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, mime);
         pageUrls.push(uploadRes.url);
 
         // Cleanup temporary files immediately after page is uploaded
@@ -314,23 +308,20 @@ async function processMangaArchiveDiskFile(
     for (let i = 0; i < imageEntries.length; i++) {
       const entry = imageEntries[i];
       const entryStream = await zipfile.openReadStreamPromise(entry);
+      const pageIndex = (i + 1).toString().padStart(3, '0');
+      const ext = path.extname(entry.fileName).toLowerCase() || '.jpg';
+      const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      const outFileName = `page_${pageIndex}${ext}`;
+      const storagePath = `users/${userId}/${randomWorkId}/${outFileName}`;
       const optimizedTempPath = path.resolve(
         TEMP_UPLOADS,
-        `archive-opt-${crypto.randomBytes(6).toString('hex')}.webp`
+        `archive-opt-${crypto.randomBytes(6).toString('hex')}${ext}`
       );
       cleanupFiles.add(optimizedTempPath);
 
-      const sharpTransformer = sharp()
-        .resize({ width: 1800, withoutEnlargement: true, fit: 'inside' })
-        .webp({ quality: 85, effort: 3 });
+      await pipeline(entryStream, fs.createWriteStream(optimizedTempPath));
 
-      await pipeline(entryStream, sharpTransformer, fs.createWriteStream(optimizedTempPath));
-
-      const pageIndex = (i + 1).toString().padStart(3, '0');
-      const outFileName = `page_${pageIndex}.webp`;
-      const storagePath = `users/${userId}/${randomWorkId}/${outFileName}`;
-
-      const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, 'image/webp');
+      const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, mime);
       pageUrls.push(uploadRes.url);
 
       // Immediate cleanup of temporary page file
@@ -575,17 +566,16 @@ mediaApiRouter.post(
         if (!isValid) {
           return res.status(400).json({ error: 'Uploaded file is not a valid image format.' });
         }
-        const outFileName = `cover-${crypto.randomBytes(6).toString('hex')}.webp`;
+        const ft = await fileTypeFromFile(assembledPath);
+        const mime = ft?.mime || 'image/jpeg';
+        const ext = ft?.ext ? `.${ft.ext}` : path.extname(assembledPath) || '.jpg';
+        const outFileName = `cover-${crypto.randomBytes(6).toString('hex')}${ext}`;
         const storagePath = `users/${userId}/${randomWorkId}/${outFileName}`;
-        const optimizedTempPath = path.resolve(TEMP_UPLOADS, `opt-cover-${crypto.randomBytes(6).toString('hex')}.webp`);
+        const optimizedTempPath = path.resolve(TEMP_UPLOADS, `opt-cover-${crypto.randomBytes(6).toString('hex')}${ext}`);
         cleanupFiles.add(optimizedTempPath);
 
-        const sharpTransformer = sharp()
-          .resize({ width: 1200, withoutEnlargement: true, fit: 'inside' })
-          .webp({ quality: 85, effort: 4 });
-
-        await pipeline(fs.createReadStream(assembledPath), sharpTransformer, fs.createWriteStream(optimizedTempPath));
-        const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, 'image/webp');
+        await pipeline(fs.createReadStream(assembledPath), fs.createWriteStream(optimizedTempPath));
+        const uploadRes = await uploadMediaFile(optimizedTempPath, storagePath, mime);
         return res.json({ success: true, coverUrl: uploadRes.url, provider: uploadRes.provider });
       }
 

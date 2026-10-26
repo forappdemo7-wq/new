@@ -191,6 +191,7 @@ export interface Work {
   publisherEmail?: string;
   publisherName?: string;
   uploaderId?: string;
+  isCommunity?: boolean;
   likesCount?: number;
   commentsCount?: number;
   isBannedPublisher?: boolean;

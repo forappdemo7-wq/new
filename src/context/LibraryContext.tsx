@@ -575,13 +575,17 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const removeWork = useCallback((workId: string) => {
+    if (!workId) return;
+
+    let targetId = workId;
     let targetSlug: string | undefined;
 
     setWorks(prevWorks => {
       const target = prevWorks.find(w => w.id === workId || w.slug === workId);
-      if (target?.slug) targetSlug = target.slug;
-      const targetId = target?.id || workId;
-
+      if (target) {
+        targetId = target.id || workId;
+        targetSlug = target.slug;
+      }
       markWorkAsDeleted(targetId, targetSlug);
 
       const next = prevWorks.filter(
@@ -591,14 +595,24 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return next;
     });
 
+    try {
+      window.dispatchEvent(
+        new CustomEvent('getnow:work-deleted', { detail: { workId, targetId, slug: targetSlug } })
+      );
+    } catch {}
+
     if (db) {
-      const path = `works/${workId}`;
-      deleteDoc(doc(db, 'works', workId)).catch(err => {
-        handleFirestoreError(err, OperationType.DELETE, path);
+      const docsToDelete = new Set<string>();
+      if (targetId) docsToDelete.add(targetId);
+      if (workId) docsToDelete.add(workId);
+      if (targetSlug) docsToDelete.add(targetSlug);
+
+      docsToDelete.forEach((docId) => {
+        const path = `works/${docId}`;
+        deleteDoc(doc(db, 'works', docId)).catch(err => {
+          handleFirestoreError(err, OperationType.DELETE, path);
+        });
       });
-      if (targetSlug && targetSlug !== workId) {
-        deleteDoc(doc(db, 'works', targetSlug)).catch(() => {});
-      }
     }
   }, []);
 

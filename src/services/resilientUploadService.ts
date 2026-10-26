@@ -285,6 +285,9 @@ export async function uploadPagesResiliently(
 ): Promise<string[]> {
   const batchSize = options.batchSize || 10;
   const total = pages.length;
+  if (total === 0) {
+    return [];
+  }
   const token = await getAuthToken();
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
   const allPageUrls: string[] = [];

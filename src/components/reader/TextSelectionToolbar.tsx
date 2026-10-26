@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { Copy, MessageSquarePlus, Check, X, Bookmark } from 'lucide-react';
 import { TextHighlight } from '../../types';
 

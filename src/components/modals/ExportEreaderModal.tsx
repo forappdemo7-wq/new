@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { Work } from '../../types';
 import { generateEpub, generateCbz, downloadBlob } from '../../services/exportService';
 import { Download, Book, FileText, Layers, Check, Loader2, X, Tablet } from 'lucide-react';

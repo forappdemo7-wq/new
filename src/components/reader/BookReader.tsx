@@ -2,12 +2,22 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Chapter, Work, ReaderSettings } from '../../types';
 import { useRouter } from '../../context/RouterContext';
 import { useLibrary } from '../../context/LibraryContext';
-import { getChapterContent, saveChapterContent } from '../../services/storage';
+import {
+  getChapterContent,
+  saveChapterContent,
+  getStoredHighlights,
+  saveStoredHighlight,
+  deleteStoredHighlight,
+  updateStoredHighlightNote,
+} from '../../services/storage';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { AudioNarrationPlayer } from './AudioNarrationPlayer';
 import { ReadingLabDrawer } from './ReadingLabDrawer';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnnotationsDrawer } from './AnnotationsDrawer';
+import { TextSelectionToolbar } from './TextSelectionToolbar';
+import { motion, AnimatePresence } from 'motion/react';
+import { TextHighlight } from '../../types';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -22,6 +32,7 @@ import {
   PinOff,
   Volume2,
   BookOpen,
+  Highlighter,
 } from 'lucide-react';
 
 interface BookReaderProps {
@@ -120,6 +131,12 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
   const [showAudioNarration, setShowAudioNarration] = useState(false);
   const [showReadingLab, setShowReadingLab] = useState(false);
   const [activeNarratedPara, setActiveNarratedPara] = useState<number | null>(null);
+  const [showAnnotations, setShowAnnotations] = useState(false);
+  const [highlights, setHighlights] = useState<TextHighlight[]>(() => getStoredHighlights(work.id));
+  const [selectionToolbar, setSelectionToolbar] = useState<{
+    position: { top: number; left: number };
+    text: string;
+  } | null>(null);
 
   // Asynchronous chapter content state (loads from Firestore subcollection or Gutenberg mirror if not pre-hydrated)
   const [asyncContent, setAsyncContent] = useState<string | null>(null);
@@ -195,9 +212,10 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
   const contentRef = useRef<HTMLDivElement>(null);
   const readerContainerRef = useRef<HTMLDivElement>(null);
 
-  const currentIndex = work.chapters.findIndex((c) => c.id === currentChapter.id);
-  const prevChapter = currentIndex > 0 ? work.chapters[currentIndex - 1] : null;
-  const nextChapter = currentIndex < work.chapters.length - 1 ? work.chapters[currentIndex + 1] : null;
+  const allChapters = work.chapters || [];
+  const currentIndex = allChapters.findIndex((c) => c.id === currentChapter.id);
+  const prevChapter = currentIndex > 0 ? allChapters[currentIndex - 1] : null;
+  const nextChapter = currentIndex >= 0 && currentIndex < allChapters.length - 1 ? allChapters[currentIndex + 1] : null;
 
   const t = THEMES[readerSettings.theme];
 
@@ -293,6 +311,70 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
     setShowBookmarkPrompt(false);
   };
 
+  // Text Selection & Highlight Listeners
+  useEffect(() => {
+    const handleMouseUp = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) return;
+      const text = selection.toString().trim();
+      if (text.length >= 3 && contentRef.current && contentRef.current.contains(selection.anchorNode)) {
+        try {
+          const range = selection.getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          setSelectionToolbar({
+            position: { top: rect.top, left: rect.left + rect.width / 2 },
+            text,
+          });
+        } catch {}
+      }
+    };
+
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) {
+        setSelectionToolbar(null);
+      }
+    };
+
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, []);
+
+  const author = work.authors?.[0];
+  const authorName = (typeof author === 'string' ? author : author?.name) || 'Author';
+
+  const handleAddHighlight = (color: 'ochre' | 'sage' | 'rose' | 'cobalt', note?: string) => {
+    if (!selectionToolbar) return;
+    const newHighlight: TextHighlight = {
+      id: `hl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      workId: work.id,
+      chapterId: currentChapter.id,
+      chapterTitle: currentChapter.title,
+      text: selectionToolbar.text,
+      color,
+      note,
+      createdAt: new Date().toISOString(),
+    };
+    saveStoredHighlight(newHighlight);
+    setHighlights((prev) => [newHighlight, ...prev]);
+    setSelectionToolbar(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const handleDeleteHighlight = (id: string) => {
+    deleteStoredHighlight(id);
+    setHighlights((prev) => prev.filter((h) => h.id !== id));
+  };
+
+  const handleUpdateHighlightNote = (id: string, note: string) => {
+    updateStoredHighlightNote(id, note);
+    setHighlights((prev) => prev.map((h) => (h.id === id ? { ...h, note } : h)));
+  };
+
   return (
     <div
       ref={readerContainerRef}
@@ -328,7 +410,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
           {/* Center: Reading Progress Info */}
           <div className="hidden md:flex items-center gap-3 text-xs font-mono">
             <span className={t.muted}>
-              Chapter {currentChapter.number} of {work.chapters.length}
+              Chapter {currentChapter.number} of {allChapters.length || 1}
             </span>
             <span className={t.muted}>·</span>
             <span className="font-semibold text-[#C25E3A] dark:text-[#E07049]">
@@ -376,6 +458,21 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
               className={`p-2 rounded-md transition-colors ${t.hover}`}
             >
               <BookmarkIcon className="w-4 h-4" />
+            </button>
+
+            {/* Notes & Highlights drawer button */}
+            <button
+              onClick={() => setShowAnnotations(true)}
+              title={`Notes & Highlights (${highlights.length})`}
+              aria-label={`Notes & Highlights (${highlights.length})`}
+              className={`p-2 rounded-md transition-colors relative ${t.hover} ${showAnnotations ? 'text-[#C25E3A]' : ''}`}
+            >
+              <Highlighter className="w-4 h-4" />
+              {highlights.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#C25E3A] text-white text-[9px] font-mono font-bold flex items-center justify-center">
+                  {highlights.length}
+                </span>
+              )}
             </button>
 
             {/* Pin controls visible */}
@@ -432,11 +529,15 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
           <h1 className="mt-3 font-serif text-3xl sm:text-4xl font-bold tracking-tight leading-tight">
             {currentChapter.title}
           </h1>
-          {work.authors[0]?.name && (
-            <div className={`mt-3 text-xs tracking-wide ${t.muted}`}>
-              by {work.authors[0].name}
-            </div>
-          )}
+          {(() => {
+            const author = work.authors?.[0];
+            const authorName = typeof author === 'string' ? author : author?.name;
+            return authorName ? (
+              <div className={`mt-3 text-xs tracking-wide ${t.muted}`}>
+                by {authorName}
+              </div>
+            ) : null;
+          })()}
         </div>
 
         {/* Prose Article / PDF Page Images */}
@@ -739,7 +840,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
               </div>
 
               <div className="flex-1 overflow-y-auto space-y-1 pr-1 font-sans text-xs">
-                {work.chapters.map((chap) => {
+                {allChapters.map((chap) => {
                   const isCurrent = chap.id === currentChapter.id;
                   return (
                     <button
@@ -830,6 +931,32 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
         onClose={() => setShowReadingLab(false)}
         work={work}
         chapter={currentChapter}
+      />
+
+      {/* ── Text Selection Floating Highlight Toolbar ─────────── */}
+      <AnimatePresence>
+        {selectionToolbar && (
+          <TextSelectionToolbar
+            position={selectionToolbar.position}
+            selectedText={selectionToolbar.text}
+            onHighlight={handleAddHighlight}
+            onCopyQuote={() => {
+              navigator.clipboard.writeText(`“${selectionToolbar.text}”\n— ${authorName}, ${work.title}`);
+            }}
+            onClose={() => setSelectionToolbar(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ── Notes & Highlights Drawer ─────────────────────────── */}
+      <AnnotationsDrawer
+        isOpen={showAnnotations}
+        onClose={() => setShowAnnotations(false)}
+        highlights={highlights}
+        onDeleteHighlight={handleDeleteHighlight}
+        onUpdateNote={handleUpdateHighlightNote}
+        workTitle={work.title}
+        authorName={authorName}
       />
     </div>
   );
