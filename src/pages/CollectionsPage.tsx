@@ -1,8 +1,6 @@
 import React from 'react';
-import { useRouter } from '../context/RouterContext';
 import { useLibrary } from '../context/LibraryContext';
 import { MediaCard } from '../components/catalog/MediaCard';
-import { ArrowRight, BookOpen } from 'lucide-react';
 import bannerClassics from '../assets/images/collection_classics_1791353492726.jpg';
 import bannerManga from '../assets/images/collection_manga_hist_1791353537481.jpg';
 import bannerScifi from '../assets/images/collection_scifi_fantasy_1791353561476.jpg';
@@ -10,7 +8,6 @@ import bannerComics from '../assets/images/collection_comics_graphic_17913535831
 
 export const CollectionsPage: React.FC = () => {
   const { works } = useLibrary();
-  const { navigate } = useRouter();
 
   const curatedGroups = [
     {

@@ -18,7 +18,7 @@ export async function fetchOpenLibraryCoverByISBN(
   isbn: string,
   size: 'S' | 'M' | 'L' = 'L',
   workTitle?: string,
-  authorName?: string
+  _authorName?: string
 ): Promise<OpenLibraryFetchResult> {
   const cleanIsbn = isbn.replace(/[^0-9X]/gi, '');
   if (!cleanIsbn) {

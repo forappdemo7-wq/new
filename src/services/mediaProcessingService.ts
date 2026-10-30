@@ -3,13 +3,10 @@ import JSZip from 'jszip';
 import type {
   ArchiveWorkerIncomingMessage,
   ArchiveWorkerOutgoingMessage,
-  ExtractedPage,
 } from '../workers/archiveWorker';
 import type {
   PdfWorkerIncomingMessage,
   PdfWorkerOutgoingMessage,
-  PdfTextChapter,
-  PdfRenderedPage,
 } from '../workers/pdfWorker';
 
 // Maximum size limits

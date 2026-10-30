@@ -3,7 +3,6 @@ import {
   User,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  signInAnonymously,
   signOut,
   onAuthStateChanged,
   updateProfile
@@ -19,7 +18,7 @@ import {
   getDocs,
   deleteDoc,
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from '../firebase';
+import { auth, db } from '../firebase';
 import { UserProfile } from '../types';
 import { clearStoredProgress, getStoredBannedUsers, markUserAsDeleted, getDeletedUserIds, getStoredWorks, saveStoredWorks } from '../services/storage';
 

@@ -16,6 +16,7 @@ import { AudioNarrationPlayer } from './AudioNarrationPlayer';
 import { ReadingLabDrawer } from './ReadingLabDrawer';
 import { AnnotationsDrawer } from './AnnotationsDrawer';
 import { TextSelectionToolbar } from './TextSelectionToolbar';
+import { SmartAnnotationModal } from './SmartAnnotationModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { TextHighlight } from '../../types';
 import {
@@ -132,11 +133,13 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
   const [showReadingLab, setShowReadingLab] = useState(false);
   const [activeNarratedPara, setActiveNarratedPara] = useState<number | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
+  const [annotationModalText, setAnnotationModalText] = useState<string | null>(null);
   const [highlights, setHighlights] = useState<TextHighlight[]>(() => getStoredHighlights(work.id));
   const [selectionToolbar, setSelectionToolbar] = useState<{
     position: { top: number; left: number };
     text: string;
   } | null>(null);
+
 
   // Asynchronous chapter content state (loads from Firestore subcollection or Gutenberg mirror if not pre-hydrated)
   const [asyncContent, setAsyncContent] = useState<string | null>(null);
@@ -203,6 +206,16 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
       cancelled = true;
     };
   }, [work.id, work.sourceUrl, currentChapter.id, currentChapter.content]);
+
+  // Smooth auto-scrolling during continuous AI narration
+  useEffect(() => {
+    if (activeNarratedPara !== null && showAudioNarration && contentRef.current) {
+      const pElements = contentRef.current.querySelectorAll('article p');
+      if (pElements[activeNarratedPara]) {
+        pElements[activeNarratedPara].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [activeNarratedPara, showAudioNarration]);
 
   // Auto-hiding chrome controls state
   const [chromePinned, setChromePinned] = useState(false);
@@ -602,18 +615,23 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
               );
             }
 
-            return rawBody.split(/\n{2,}/).map((paragraph, idx) => (
-              <p
-                key={idx}
-                className={`leading-relaxed transition-all duration-300 ${
-                  activeNarratedPara === idx && showAudioNarration
-                    ? 'bg-amber-500/10 dark:bg-amber-400/15 p-3 rounded-xl border-l-4 border-amber-500 shadow-xs'
-                    : ''
-                }`}
-              >
-                {paragraph}
-              </p>
-            ));
+            return rawBody
+              .split(/\n{2,}/)
+              .map(p => p.trim())
+              .filter(Boolean)
+              .map((paragraph, idx) => (
+                <p
+                  key={idx}
+                  id={`narrated-p-${idx}`}
+                  className={`leading-relaxed transition-all duration-300 ${
+                    activeNarratedPara === idx && showAudioNarration
+                      ? 'bg-amber-500/10 dark:bg-amber-400/15 p-3 rounded-xl border-l-4 border-amber-500 shadow-xs'
+                      : ''
+                  }`}
+                >
+                  {paragraph}
+                </p>
+              ));
           })()}
         </article>
 
@@ -940,6 +958,7 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
             position={selectionToolbar.position}
             selectedText={selectionToolbar.text}
             onHighlight={handleAddHighlight}
+            onExplainContext={() => setAnnotationModalText(selectionToolbar.text)}
             onCopyQuote={() => {
               navigator.clipboard.writeText(`“${selectionToolbar.text}”\n— ${authorName}, ${work.title}`);
             }}
@@ -947,6 +966,15 @@ export const BookReader: React.FC<BookReaderProps> = ({ work, currentChapter }) 
           />
         )}
       </AnimatePresence>
+
+      {/* ── Smart AI Contextual Annotation Modal ─────────────── */}
+      <SmartAnnotationModal
+        isOpen={!!annotationModalText}
+        onClose={() => setAnnotationModalText(null)}
+        selectedText={annotationModalText || ''}
+        bookTitle={work.title}
+        authorName={authorName}
+      />
 
       {/* ── Notes & Highlights Drawer ─────────────────────────── */}
       <AnnotationsDrawer

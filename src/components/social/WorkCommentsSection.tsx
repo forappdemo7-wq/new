@@ -75,8 +75,8 @@ export const WorkCommentsSection: React.FC<WorkCommentsSectionProps> = ({ work }
     return local.filter((c) => !deletedIds.includes(c.id));
   });
   const [commentText, setCommentText] = useState('');
-  const [guestName, setGuestName] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [guestName] = useState('');
+  const [isSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [undoComment, setUndoComment] = useState<WorkComment | null>(null);

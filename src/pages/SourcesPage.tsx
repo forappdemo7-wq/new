@@ -1,6 +1,6 @@
 import React from 'react';
 import { useRouter } from '../context/RouterContext';
-import { ArrowLeft, CheckCircle2, ExternalLink, ShieldAlert, ShieldCheck, Link as LinkIcon, BookOpen, AlertOctagon } from 'lucide-react';
+import { ArrowLeft, ExternalLink, ShieldCheck, Link as LinkIcon, AlertOctagon } from 'lucide-react';
 
 export const SourcesPage: React.FC = () => {
   const { navigate } = useRouter();

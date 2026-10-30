@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLibrary } from '../context/LibraryContext';
-import { ArrowLeft, Copy, Check, Download, Rss, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Copy, Check, Download, Rss } from 'lucide-react';
 import { Work } from '../types';
 
 export const OpdsFeedPage: React.FC = () => {

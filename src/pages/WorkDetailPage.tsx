@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from '../context/RouterContext';
 import { useLibrary } from '../context/LibraryContext';
 import { useAuth } from '../context/AuthContext';
-import { getLicenseInfo } from '../data/licenses';
 import { ReportModal } from '../components/modals/ReportModal';
 import { ExportEreaderModal } from '../components/modals/ExportEreaderModal';
 import { generateGhostCoverSvg } from '../services/coverService';
@@ -18,9 +17,6 @@ import {
   ShieldCheck,
   Check,
   Copy,
-  FileText,
-  Clock,
-  Layers,
   Heart,
   MessageSquare,
   User,
@@ -29,7 +25,7 @@ import {
   Trash2,
   Shield,
 } from 'lucide-react';
-import { Author, WorkLike, Chapter } from '../types';
+import { WorkLike, Chapter } from '../types';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 
 interface WorkDetailProps {
@@ -40,7 +36,6 @@ export const WorkDetailPage: React.FC<WorkDetailProps> = ({ slug }) => {
   const { navigate } = useRouter();
   const { getWorkBySlug, isFavorite, toggleFavoriteWork, progress, works, removeWork } = useLibrary();
   const { currentUser, userProfile, openAuthModal, isAdmin } = useAuth();
-  const likesVersion = useLikesSync();
 
   const [showReportModal, setShowReportModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);

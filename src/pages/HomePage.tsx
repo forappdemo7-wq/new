@@ -6,7 +6,7 @@ import { ContinueReadingShelf } from '../components/home/ContinueReadingShelf';
 import { FeaturedCollectionsShelf } from '../components/home/FeaturedCollectionsShelf';
 import { ArchiveSourcesSection } from '../components/home/ArchiveSourcesSection';
 import { MediaCard } from '../components/catalog/MediaCard';
-import { ArrowRight, Shuffle, BookOpen } from 'lucide-react';
+import { ArrowRight, Shuffle } from 'lucide-react';
 import { Work } from '../types';
 import { sortWorksByLikes, useLikesSync } from '../services/interactionService';
 

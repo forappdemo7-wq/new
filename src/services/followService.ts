@@ -1,16 +1,14 @@
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { db } from '../firebase';
 import {
   collection,
   doc,
   setDoc,
   deleteDoc,
   getDoc,
-  getDocs,
   onSnapshot,
 } from 'firebase/firestore';
-import { UserProfile, Work } from '../types';
+import { UserProfile } from '../types';
 import { sendUploaderNotification } from './interactionService';
-import { INITIAL_COMMUNITY_WORKS } from '../data/communityWorks';
 
 export interface FollowUserItem {
   uid: string;

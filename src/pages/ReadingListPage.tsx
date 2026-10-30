@@ -2,10 +2,10 @@ import React from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { useRouter } from '../context/RouterContext';
 import { MediaCard } from '../components/catalog/MediaCard';
-import { Bookmark, BookOpen, Compass, Trash2, ArrowLeft } from 'lucide-react';
+import { Bookmark, BookOpen, Compass, ArrowLeft } from 'lucide-react';
 
 export const ReadingListPage: React.FC = () => {
-  const { works, bookmarks, removeUserBookmark, favorites, toggleFavoriteWork } = useLibrary();
+  const { works, bookmarks, favorites } = useLibrary();
   const { navigate } = useRouter();
 
   // Find works that are bookmarked or favorited

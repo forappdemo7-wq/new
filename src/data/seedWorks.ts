@@ -22,7 +22,6 @@ import { INITIAL_COMMUNITY_WORKS } from './communityWorks';
 import frankensteinCover from '../assets/images/book_frankenstein_cover_1790759531684.jpg';
 import peppercarrotCover from '../assets/images/comic_peppercarrot_cover_1790759548368.jpg';
 import aliceCover from '../assets/images/book_alice_wonderland_1790759564032.jpg';
-import scifiCover from '../assets/images/comic_scifi_odyssey_1790759577653.jpg';
 import kafkaCover from '../assets/images/book_metamorphosis_vintage_1790760925460.jpg';
 import hokusaiCover from '../assets/images/manga_hokusai_woodblock_1790760941217.jpg';
 import ubunchuCover from '../assets/images/manga_ubunchu_school_club_1790760962313.jpg';
@@ -52,7 +51,6 @@ import mobyDickPaintingCover from '../assets/images/moby_dick_painting_cover_179
 import nineteen84DystopianCover from '../assets/images/nineteen84_distopian_cover_1790850382066.jpg';
 import gatsbyVintageCover from '../assets/images/great_gatsby_vintage_cover_1790850405905.jpg';
 import pridePrejudiceRegencyCover from '../assets/images/pride_prejudice_regency_cover_1790850423526.jpg';
-import blackJackCover from '../assets/images/black_jack_manga_cover_1790850446191.jpg';
 
 export const SEED_WORKS: Work[] = [
   ...INITIAL_COMMUNITY_WORKS,

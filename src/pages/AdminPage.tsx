@@ -17,16 +17,11 @@ import {
   AlertTriangle,
   CheckCircle2,
   FileText,
-  Globe,
   ExternalLink,
   ShieldCheck,
-  Check,
   ImageIcon,
   Database,
-  UserX,
   Users,
-  Ban,
-  Lock,
   Eye,
   EyeOff,
   KeyRound,
@@ -43,8 +38,7 @@ export const AdminPage: React.FC = () => {
     userProfile,
     isAdmin,
     adminLogin,
-    adminLogout,
-    adminChangeUserPassword
+    adminLogout
   } = useAuth();
   const {
     works,
@@ -52,9 +46,7 @@ export const AdminPage: React.FC = () => {
     removeWork,
     restoreSeedCatalog,
     reports,
-    audits,
-    bannedUsers,
-    addAuditLog
+    audits
   } = useLibrary();
 
   // Admin Login Screen state (shown when not authenticated)
@@ -308,8 +300,6 @@ export const AdminPage: React.FC = () => {
       showNotification('Invalid JSON formatting.');
     }
   };
-
-  const needsReviewList = works.filter(w => w.verificationStatus === 'needs_review');
 
   // RESTRICTED ACCESS GATE: If not logged in as Admin, show ONLY the Admin Login Screen
   if (!isAdmin) {

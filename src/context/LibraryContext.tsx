@@ -7,7 +7,6 @@ import {
   getStoredProgress,
   saveProgress,
   saveAllProgress,
-  clearStoredProgress,
   clearAllStoredProgress,
   getStoredFavorites,
   toggleFavorite,
@@ -545,7 +544,6 @@ export const LibraryProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Save each chapter with content into subcollection 'works/{workId}/chapters/{chapterId}'
         (updatedWork.chapters || []).forEach(ch => {
           if (ch && ch.id) {
-            const chPath = `works/${work.id}/chapters/${ch.id}`;
             // Ensure each chapter subdocument is safely under 800KB
             const maxLen = 800000;
             const safeContent = (ch.content || '').substring(0, maxLen);

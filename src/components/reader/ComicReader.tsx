@@ -20,8 +20,10 @@ import {
   CheckCircle2,
   BookOpen,
   ArrowRight,
-  RotateCcw
+  RotateCcw,
+  Sparkles
 } from 'lucide-react';
+import { MangaPanelVisionModal } from './MangaPanelVisionModal';
 
 interface ComicReaderProps {
   work: Work;
@@ -77,6 +79,7 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showChapterDrawer, setShowChapterDrawer] = useState(false);
+  const [showMangaVision, setShowMangaVision] = useState(false);
   const [privacyMask, setPrivacyMask] = useState(false);
   const [atEndOfChapter, setAtEndOfChapter] = useState(false);
 
@@ -94,9 +97,6 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
   );
   const nextChapter = currentChapterIdx >= 0 && currentChapterIdx < allChapters.length - 1
     ? allChapters[currentChapterIdx + 1]
-    : null;
-  const prevChapter = currentChapterIdx > 0
-    ? allChapters[currentChapterIdx - 1]
     : null;
 
   // Reset page index & completion state when chapter changes
@@ -327,6 +327,16 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
               />
             </div>
           </div>
+
+          <button
+            onClick={() => setShowMangaVision(true)}
+            title="AI Manga Panel Vision & Dialogue OCR"
+            aria-label="AI Manga Panel Vision & Dialogue OCR"
+            className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-800/60 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+            <span className="hidden sm:inline">AI Panel OCR</span>
+          </button>
 
           <button
             onClick={() => setShowSettings(!showSettings)}
@@ -695,6 +705,17 @@ export const ComicReader: React.FC<ComicReaderProps> = ({ work, currentChapter }
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── AI Manga Panel Vision & Dialogue Modal ─────────── */}
+      <MangaPanelVisionModal
+        isOpen={showMangaVision}
+        onClose={() => setShowMangaVision(false)}
+        imageUrl={currentPage?.imageUrl || ''}
+        svgArt={currentPage?.svgArt}
+        mangaTitle={work.title}
+        chapterTitle={currentChapter.title}
+        pageNumber={currentPageIndex + 1}
+      />
 
     </div>
   );

@@ -4,7 +4,6 @@ import { useRouter } from '../context/RouterContext';
 import { useAuth } from '../context/AuthContext';
 import { MediaCard } from '../components/catalog/MediaCard';
 import { PublishWorkModal } from '../components/modals/PublishWorkModal';
-import { generateGhostCoverSvg, GHOST_COVER_PALETTES } from '../services/coverService';
 import { sortWorksByLikes, useLikesSync } from '../services/interactionService';
 import { searchUsers } from '../services/userSearchService';
 import { UserSearchResultsSection, UserSearchDropdown } from '../components/common/UserSearchComponents';
@@ -17,18 +16,16 @@ import {
   Plus,
   Search,
   Users,
-  Sparkles,
   User,
   ArrowRight,
   X,
-  Trash2,
   Check,
 } from 'lucide-react';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { Work } from '../types';
 
 export const UserUploadsPage: React.FC = () => {
-  const { works, createOrUpdateWork, removeWork } = useLibrary();
+  const { works, removeWork } = useLibrary();
   const { navigate } = useRouter();
   const { currentUser, userProfile, openAuthModal, isAdmin } = useAuth();
   const likesVersion = useLikesSync();
@@ -67,7 +64,6 @@ export const UserUploadsPage: React.FC = () => {
   };
 
   const activeUserId = currentUser?.uid || userProfile?.uid;
-  const activeDisplayName = userProfile?.displayName || currentUser?.displayName || 'Reader';
 
   const canDeleteWork = (w: Work) => {
     if (isAdmin) return true;

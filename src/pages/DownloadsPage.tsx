@@ -1,7 +1,7 @@
 import React from 'react';
 import { useLibrary } from '../context/LibraryContext';
 import { useRouter } from '../context/RouterContext';
-import { Download as DownloadIcon, BookOpen, Compass, FileText, HardDrive, CheckCircle2, ArrowLeft, ExternalLink } from 'lucide-react';
+import { Download as DownloadIcon, BookOpen, HardDrive, CheckCircle2, ArrowLeft } from 'lucide-react';
 
 export const DownloadsPage: React.FC = () => {
   const { works } = useLibrary();

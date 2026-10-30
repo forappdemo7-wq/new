@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Square, Volume2, VolumeX, Loader2, ChevronDown, Settings2, X, RefreshCw } from 'lucide-react';
+import { Play, Pause, Square, Volume2, Loader2, Settings2, X } from 'lucide-react';
 import { fetchGeminiSpeech, GEMINI_VOICES, GeminiVoiceName } from '../../services/geminiClient';
 
 interface AudioNarrationPlayerProps {
-  workTitle: string;
+  workTitle?: string;
   chapterTitle: string;
   chapterContent: string;
   onParagraphChange?: (paragraphIndex: number) => void;
@@ -11,7 +11,6 @@ interface AudioNarrationPlayerProps {
 }
 
 export const AudioNarrationPlayer: React.FC<AudioNarrationPlayerProps> = ({
-  workTitle,
   chapterTitle,
   chapterContent,
   onParagraphChange,
@@ -26,12 +25,12 @@ export const AudioNarrationPlayer: React.FC<AudioNarrationPlayerProps> = ({
   const [statusText, setStatusText] = useState<string>('Ready to narrate');
   const [showSettings, setShowSettings] = useState(false);
 
-  // Split chapter into readable prose paragraphs (skipping empty stubs)
+  // Split chapter into readable prose paragraphs (skipping empty lines)
   const paragraphs = React.useMemo(() => {
     return chapterContent
       .split(/\n{2,}/)
       .map(p => p.trim())
-      .filter(p => p.length > 20);
+      .filter(Boolean);
   }, [chapterContent]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -142,8 +141,8 @@ export const AudioNarrationPlayer: React.FC<AudioNarrationPlayerProps> = ({
       audioCache.current.set(idx, audioUrl);
       playAudioBlob(audioUrl, idx);
     } catch (err: any) {
-      console.warn('Gemini TTS failed, automatically falling back to browser speech:', err);
-      setStatusText('Falling back to local speech engine...');
+      console.warn('Gemini TTS rate limit or error, falling back to local speech engine:', err);
+      setStatusText('Using local speech engine (Rate limit fallback)');
       setUseNativeFallback(true);
       playParagraphWithWebSpeech(idx);
     }
@@ -161,7 +160,7 @@ export const AudioNarrationPlayer: React.FC<AudioNarrationPlayerProps> = ({
     audio.oncanplay = () => {
       setIsLoading(false);
       setIsPlaying(true);
-      setStatusText(`Narrating paragraph ${idx + 1} of ${paragraphs.length} (Gemini)`);
+      setStatusText(`Narrating paragraph ${idx + 1} of ${paragraphs.length} (Gemini AI)`);
       audio.play().catch(e => {
         console.warn('Audio play failed:', e);
         playParagraphWithWebSpeech(idx);
@@ -190,13 +189,21 @@ export const AudioNarrationPlayer: React.FC<AudioNarrationPlayerProps> = ({
       setIsPlaying(false);
       setStatusText('Paused');
     } else {
-      if (audioRef.current && audioRef.current.src && !audioRef.current.ended) {
-        audioRef.current.play();
-        setIsPlaying(true);
-        setStatusText(`Narrating paragraph ${currentParagraphIdx + 1}`);
-      } else if ('speechSynthesis' in window && window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-        setIsPlaying(true);
+      if (useNativeFallback) {
+        if ('speechSynthesis' in window && window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+          setIsPlaying(true);
+          setStatusText(`Narrating paragraph ${currentParagraphIdx + 1} of ${paragraphs.length} (Native)`);
+        } else {
+          playParagraphWithWebSpeech(currentParagraphIdx);
+        }
+      } else if (audioRef.current && audioRef.current.src && !audioRef.current.ended) {
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
+          setStatusText(`Narrating paragraph ${currentParagraphIdx + 1} of ${paragraphs.length} (Gemini AI)`);
+        }).catch(() => {
+          playParagraph(currentParagraphIdx);
+        });
       } else {
         playParagraph(currentParagraphIdx);
       }

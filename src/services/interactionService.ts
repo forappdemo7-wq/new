@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { useState, useEffect } from 'react';
+import { db } from '../firebase';
 import {
   collection,
   doc,
@@ -10,7 +10,6 @@ import {
   getDocs,
   onSnapshot,
   query,
-  orderBy,
   limit,
   increment
 } from 'firebase/firestore';

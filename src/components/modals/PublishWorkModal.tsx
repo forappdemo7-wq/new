@@ -28,17 +28,14 @@ import {
   Plus,
   Trash2,
   Globe,
-  Layers,
   ArrowRight,
   ShieldCheck,
   User,
   CheckCircle2,
   AlertTriangle,
-  Wifi,
   WifiOff,
   RotateCcw,
   Info,
-  RefreshCw,
 } from 'lucide-react';
 
 interface PublishWorkModalProps {

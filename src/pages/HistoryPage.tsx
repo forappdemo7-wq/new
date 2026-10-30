@@ -82,8 +82,6 @@ export const HistoryPage: React.FC = () => {
         ) : (
           <div className="space-y-4">
             {historyItems.map(({ progress: p, work }) => {
-              const prefix =
-                work.type === 'book' ? 'book' : work.type === 'comic' ? 'comic' : work.type === 'manga' ? 'manga' : 'work';
               const formattedDate = new Date(p.lastReadAt).toLocaleDateString(undefined, {
                 month: 'short',
                 day: 'numeric',

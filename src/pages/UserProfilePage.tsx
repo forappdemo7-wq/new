@@ -35,8 +35,6 @@ import {
   Trash2,
   Upload,
   X,
-  AlertTriangle,
-  ExternalLink,
 } from 'lucide-react';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 

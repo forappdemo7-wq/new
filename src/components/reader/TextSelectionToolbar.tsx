@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Copy, MessageSquarePlus, Check, X, Bookmark } from 'lucide-react';
-import { TextHighlight } from '../../types';
+import { motion } from 'motion/react';
+import { Copy, MessageSquarePlus, Check, X, Sparkles } from 'lucide-react';
 
 interface TextSelectionToolbarProps {
   position: { top: number; left: number };
-  selectedText: string;
+  selectedText?: string;
   onHighlight: (color: 'ochre' | 'sage' | 'rose' | 'cobalt', note?: string) => void;
   onCopyQuote: () => void;
+  onExplainContext?: () => void;
   onClose: () => void;
 }
 
@@ -20,9 +20,9 @@ const COLORS: { key: 'ochre' | 'sage' | 'rose' | 'cobalt'; bg: string; border: s
 
 export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
   position,
-  selectedText,
   onHighlight,
   onCopyQuote,
+  onExplainContext,
   onClose
 }) => {
   const [showNoteInput, setShowNoteInput] = useState(false);
@@ -57,6 +57,21 @@ export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
     >
       {!showNoteInput ? (
         <div className="flex items-center gap-1">
+          {/* AI Explain Context Button */}
+          {onExplainContext && (
+            <button
+              onClick={() => {
+                onExplainContext();
+                onClose();
+              }}
+              title="Explain Context & History with AI"
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 rounded-lg transition-colors cursor-pointer border border-amber-500/30"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+              <span>Explain</span>
+            </button>
+          )}
+
           {/* Highlight Color Pickers */}
           <div className="flex items-center gap-1.5 px-2 py-1 border-r border-stone-700/80">
             {COLORS.map((c) => (
@@ -153,3 +168,4 @@ export const TextSelectionToolbar: React.FC<TextSelectionToolbarProps> = ({
     </motion.div>
   );
 };
+

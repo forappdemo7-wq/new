@@ -4,11 +4,9 @@ import { useRouter } from '../context/RouterContext';
 import { MediaCard } from '../components/catalog/MediaCard';
 import {
   Search,
-  ChevronDown,
   X,
   ChevronLeft,
   ChevronRight,
-  Filter,
   RefreshCw,
   BookOpen,
 } from 'lucide-react';
