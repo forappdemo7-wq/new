@@ -3,6 +3,7 @@ process.env.DISABLE_HMR = 'true';
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -217,7 +218,15 @@ async function startServer() {
   app.use('/api/admin', adminAuthApiRouter);
 
   // Vite middleware (Dev) or Static files (Prod)
-  if (process.env.NODE_ENV !== 'production') {
+  const distHtmlPath = path.resolve(__dirname, 'dist', 'index.html');
+  const hasDist = fs.existsSync(distHtmlPath);
+
+  if (process.env.NODE_ENV === 'production' && hasDist) {
+    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.get('*', (_req, res) => {
+      res.sendFile(distHtmlPath);
+    });
+  } else {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: {
@@ -226,11 +235,6 @@ async function startServer() {
       },
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
-    });
   }
 
   // Optimize persistent socket keep-alive for 10,000+ active connections
